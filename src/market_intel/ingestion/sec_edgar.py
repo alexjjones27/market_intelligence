@@ -132,9 +132,16 @@ class SecEdgarIngestor(BaseIngestor):
             item_codes = [c.strip() for c in (items_field[i] if i < len(items_field) else "").split(",") if c.strip()]
             event_type_guess = self._guess_event_type(form, item_codes)
 
-            report_date = report_dates[i] if i < len(report_dates) and report_dates[i] else filing_date_str
-            event_ts = f"{report_date}T00:00:00.000000Z"
+            report_date = report_dates[i] if i < len(report_dates) and report_dates[i] else None
             published_ts = f"{filing_date_str}T00:00:00.000000Z"
+            # event_timestamp = when this became PUBLIC (filing date), for every form type.
+            # SEC's `reportDate` means something different per form: for an 8-K it's close to
+            # the disclosure date (a fine proxy), but for a 10-Q/10-K it's the fiscal
+            # quarter/year END -- using it as the market-reaction anchor would date an earnings
+            # event by its quarter-end instead of when the market actually learned the number,
+            # which is exactly wrong for measuring price reaction. Filing date is correct for
+            # both cases; reportDate is kept separately as fiscal_period_end metadata.
+            event_ts = published_ts
 
             out.append(
                 RawItem(
@@ -144,12 +151,13 @@ class SecEdgarIngestor(BaseIngestor):
                     url=filing_url,
                     ticker_guess=ticker,
                     company_guess=company_name,
-                    title=f"{company_name} {form} filing"
+                    title=f"{company_name} {form} filing {filing_date_str}"
                     + (f" (items {', '.join(item_codes)})" if item_codes else ""),
                     body_text=None,  # MVP: metadata-only; full-text fetch is a TODO (see README)
                     event_type_guess=event_type_guess,
                     published_at=published_ts,
                     event_timestamp_guess=event_ts,
+                    fiscal_period_end=report_date,
                     retrieved_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
                     confirmed=True,  # primary source, filed directly with the SEC
                     is_mocked=False,

@@ -34,6 +34,23 @@ def test_persistence_ratio_reversal_vs_growth():
     assert reversal < 0
 
 
+def test_confirmation_coverage_and_eligibility():
+    full = compute_confirmation_score(abnormal_return_1d=0.03, volume_z=1.5, iv_change=0.1, persistence_1d_over_5m=1.0)
+    assert full.coverage == 1.0
+    assert full.components_missing == []
+    assert full.is_eligible_for_alert is True
+
+    thin = compute_confirmation_score(abnormal_return_1d=None, volume_z=None, iv_change=0.1, persistence_1d_over_5m=None)
+    assert thin.coverage == 0.25
+    assert set(thin.components_missing) == {"return", "volume", "persistence"}
+    assert thin.is_eligible_for_alert is False
+
+    empty = compute_confirmation_score(abnormal_return_1d=None, volume_z=None, iv_change=None, persistence_1d_over_5m=None)
+    assert empty.score == 0.0
+    assert empty.coverage == 0.0
+    assert empty.is_eligible_for_alert is False
+
+
 def test_confirmation_score_rewards_broad_persistent_move():
     loud_no_confirmation = compute_confirmation_score(
         abnormal_return_1d=0.001, volume_z=0.1, iv_change=0.0, persistence_1d_over_5m=0.1

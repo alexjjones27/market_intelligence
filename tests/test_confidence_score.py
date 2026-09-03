@@ -14,7 +14,7 @@ def _base_inputs(**overrides) -> ConfidenceInputs:
         num_corroborating_sources=4,
         extraction_completeness=1.0,
         timestamp_certainty=1.0,
-        already_priced_in=0.0,
+        already_priced_in=False,
         opinion_fraction=0.0,
     )
     defaults.update(overrides)
@@ -39,9 +39,24 @@ def test_unconfirmed_single_source_scores_much_lower():
 
 
 def test_already_priced_in_reduces_confidence():
-    fresh = _base_inputs(already_priced_in=0.0)
-    stale = _base_inputs(already_priced_in=1.0)
+    fresh = _base_inputs(already_priced_in=False)
+    stale = _base_inputs(already_priced_in=True)
     assert compute_confidence(stale) < compute_confidence(fresh)
+
+
+def test_already_priced_in_unassessed_renormalizes_rather_than_defaults_to_zero():
+    # None ("not assessed") must land strictly between the two known
+    # states, not silently collapse to the same score as "confirmed not
+    # priced in" (False) -- that would misrepresent absence of evidence
+    # as evidence of absence.
+    unassessed = compute_confidence(_base_inputs(already_priced_in=None))
+    known_fresh = compute_confidence(_base_inputs(already_priced_in=False))
+    known_stale = compute_confidence(_base_inputs(already_priced_in=True))
+    assert known_stale < unassessed < known_fresh or unassessed == known_fresh
+    # with every other input at its max, dropping this component and
+    # renormalizing over the rest should NOT equal the "priced in" (worst
+    # case) score:
+    assert unassessed != known_stale
 
 
 def test_opinion_heavy_content_reduces_confidence():
@@ -59,7 +74,7 @@ def test_score_is_bounded_0_to_1():
             num_corroborating_sources=0,
             extraction_completeness=0.0,
             timestamp_certainty=0.0,
-            already_priced_in=1.0,
+            already_priced_in=True,
             opinion_fraction=1.0,
         )
     )

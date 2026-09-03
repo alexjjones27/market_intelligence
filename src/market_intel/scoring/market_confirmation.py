@@ -44,10 +44,21 @@ def persistence_ratio(initial_return: float | None, later_return: float | None) 
     return round(later_return / initial_return, 4)
 
 
+# Core components a confirmation score should be built from. `breadth`
+# (sector peer agreement) is a bonus signal, not counted toward coverage
+# -- it's legitimately unavailable for a ticker with no configured peers,
+# and that shouldn't be penalized the same as missing return/volume/IV.
+CORE_COMPONENTS = ["return", "volume", "iv", "persistence"]
+MIN_COVERAGE_FOR_ALERT = 0.5
+
+
 @dataclass
 class ConfirmationResult:
-    score: float  # 0..1
+    score: float  # 0..1, blended over whatever components ARE available
     components: dict = field(default_factory=dict)
+    components_missing: list[str] = field(default_factory=list)
+    coverage: float = 0.0                    # fraction of CORE_COMPONENTS available
+    is_eligible_for_alert: bool = False       # coverage below minimum -> too thin to alert on, regardless of score
 
 
 def compute_confirmation_score(
@@ -69,7 +80,13 @@ def compute_confirmation_score(
     if sector_breadth is not None:
         components["breadth"] = min(max(sector_breadth, 0.0), 1.0)
 
+    missing = [c for c in CORE_COMPONENTS if c not in components]
+    coverage = round((len(CORE_COMPONENTS) - len(missing)) / len(CORE_COMPONENTS), 4)
+    eligible = coverage >= MIN_COVERAGE_FOR_ALERT
+
     if not components:
-        return ConfirmationResult(score=0.0, components=components)
+        return ConfirmationResult(score=0.0, components={}, components_missing=missing, coverage=coverage, is_eligible_for_alert=False)
     score = round(sum(components.values()) / len(components), 4)
-    return ConfirmationResult(score=score, components=components)
+    return ConfirmationResult(
+        score=score, components=components, components_missing=missing, coverage=coverage, is_eligible_for_alert=eligible
+    )

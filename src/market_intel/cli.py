@@ -42,20 +42,47 @@ def init_db(db_path):
 @click.option("--tickers", default=None, help="Comma-separated tickers (defaults to watchlist.json).")
 @click.option("--lookback-days", default=10, show_default=True, help="SEC EDGAR filing lookback window.")
 @click.option("--db-path", default=None, help="SQLite DB path (defaults to config).")
+@click.option(
+    "--mode",
+    type=click.Choice(["live", "backtest", "demo"]),
+    default="demo",
+    show_default=True,
+    help=(
+        "live: unconfigured providers produce INCOMPLETE events (fields left null) instead of "
+        "mock data -- never silently substitutes synthetic numbers. backtest/demo: mock fallback "
+        "allowed, every mocked value flagged is_mocked=true throughout."
+    ),
+)
 @click.option("--min-surprise", default=0.25, show_default=True)
-@click.option("--min-confidence", default=0.5, show_default=True)
-@click.option("--min-confirmation", default=0.25, show_default=True)
-def run(tickers, lookback_days, db_path, min_surprise, min_confidence, min_confirmation):
+@click.option("--min-confidence", default=0.75, show_default=True)
+@click.option("--min-market-confirmation", default=0.65, show_default=True)
+@click.option(
+    "--allow-secondary-source/--require-primary-source",
+    default=False,
+    help="Allow immediate alerts on events with no primary-source (SEC/IR) confirmation. Off by default.",
+)
+def run(tickers, lookback_days, db_path, mode, min_surprise, min_confidence, min_market_confirmation, allow_secondary_source):
     """Run the full pipeline end-to-end and print ranked alerts."""
     from market_intel.alerts.alert_engine import AlertThresholds
     from market_intel.pipeline import run_pipeline
 
     ticker_list = [t.strip().upper() for t in tickers.split(",")] if tickers else _default_tickers()
-    click.echo(f"Running pipeline for: {', '.join(ticker_list)}")
-    _warn_mocked_sources()
+    click.echo(f"Running pipeline for: {', '.join(ticker_list)} [mode={mode}]")
+    if mode == "live":
+        click.echo(
+            "LIVE mode: unconfigured providers will produce INCOMPLETE events (null fields), "
+            "never synthetic replacements. Check the source table in README for what's actually wired up."
+        )
+    else:
+        _warn_mocked_sources()
 
-    thresholds = AlertThresholds(min_surprise=min_surprise, min_confidence=min_confidence, min_confirmation=min_confirmation)
-    result = run_pipeline(ticker_list, db_path=db_path, lookback_days=lookback_days, alert_thresholds=thresholds)
+    thresholds = AlertThresholds(
+        min_surprise=min_surprise,
+        min_confidence=min_confidence,
+        min_market_confirmation=min_market_confirmation,
+        require_primary_source=not allow_secondary_source,
+    )
+    result = run_pipeline(ticker_list, db_path=db_path, lookback_days=lookback_days, alert_thresholds=thresholds, mode=mode)
 
     click.echo(f"\n{len(result['events'])} events built from raw ingestion.\n")
     _print_alerts("IMMEDIATE ALERTS", result["immediate_alerts"])
@@ -70,15 +97,16 @@ def _print_alerts(title: str, alerts: list[dict]) -> None:
         click.echo("(none)")
         return
     for i, a in enumerate(alerts, 1):
-        click.echo(f"\n[{i}] {a['headline']}")
+        click.echo(f"\n[{i}] [{a['status_badge']}] {a['headline']}")
         click.echo(
             f"    rank={a['composite_rank_score']:.3f}  surprise={_fmt(a['surprise_score'])}  "
-            f"confidence={_fmt(a['confidence_score'])}  confirmation={_fmt(a['confirmation_score'])}"
+            f"confidence={_fmt(a['confidence_score'])}  market_confirmation={_fmt(a['market_confirmation_score'])}"
         )
         click.echo(f"    Expectation gap: {a['expectation_gap']}")
         click.echo(f"    Reaction:        {a['reaction_summary']}")
         click.echo(f"    Assessment:      {a['assessment']}")
         click.echo(f"    Risk:            {a['risk_note']}")
+        click.echo(f"    Why now:         {', '.join(a['why_now'])}")
         if a.get("sources"):
             click.echo(f"    Sources:         {', '.join(a['sources'][:3])}")
     click.echo()
@@ -121,7 +149,13 @@ def dashboard(db_path, export_dir):
 
         click.echo("\nMACRO REGIME STATE")
         regime = macro_regime_state(conn)
-        click.echo(f"  {regime}" if regime else "  (no regime data yet -- run `market-intel macro-regime`)")
+        if regime:
+            click.echo(f"  growth_trend={regime['growth_state']}  inflation_trend={regime['inflation_state']}  -> {regime['regime_label']}")
+            click.echo("  Historical tendency by regime (pattern, not a forecast):")
+            for asset, tendency in regime["expected_cross_asset_direction"].items():
+                click.echo(f"    {asset}: {tendency}")
+        else:
+            click.echo("  (no regime data yet -- run `market-intel macro-regime`)")
 
         click.echo("\nUPCOMING CALENDAR")
         for row in upcoming_event_calendar(conn, limit=20):
@@ -165,8 +199,34 @@ def macro_regime(db_path):
             ),
         )
 
-    click.echo(f"Regime: {assessment.regime_label} (growth={assessment.growth_state}, inflation={assessment.inflation_state})")
-    click.echo(f"Expected cross-asset direction: {assessment.expected_cross_asset_direction}")
+    click.echo(f"growth_trend={assessment.growth_state}  inflation_trend={assessment.inflation_state}  -> {assessment.regime_label}")
+    click.echo("Historical tendency by regime (pattern, not a forecast):")
+    for asset, tendency in assessment.expected_cross_asset_direction.items():
+        click.echo(f"  {asset}: {tendency}")
+
+
+@cli.command()
+@click.option("--db-path", default=None, help="SQLite DB path (defaults to config).")
+@click.option("--limit", default=50, show_default=True)
+def quarantine(db_path, limit):
+    """List events flagged by the data-quality gate (warning or reject) --
+    a lightweight follow-up queue. Nothing here was deleted; these still
+    appear in the morning brief, this just collects them in one place."""
+    from market_intel.alerts.dashboard import quarantine_events
+    from market_intel.db.database import connect
+
+    with connect(db_path) as conn:
+        rows = quarantine_events(conn, limit=limit)
+
+    if not rows:
+        click.echo("Nothing quarantined.")
+        return
+    for r in rows:
+        click.echo(
+            f"[{r['status'].upper()}] {r['company']} ({r['ticker']}) {r['event_type']} "
+            f"@ {r['timestamp_utc']} [{r['source_tier']}]"
+        )
+        click.echo(f"    issues: {', '.join(r['issues'])}")
 
 
 @cli.command()

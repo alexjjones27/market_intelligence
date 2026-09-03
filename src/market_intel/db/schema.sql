@@ -61,7 +61,13 @@ CREATE TABLE IF NOT EXISTS raw_items (
     is_mocked             INTEGER NOT NULL DEFAULT 0,  -- 1 if produced by a mock ingestor
     clustered_event_id    TEXT,                        -- set once assigned to an event
     created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    FOREIGN KEY (clustered_event_id) REFERENCES events(event_id)
+    FOREIGN KEY (clustered_event_id) REFERENCES events(event_id),
+    -- Idempotent re-ingestion: re-running the pipeline against the same
+    -- ticker/source/url must not create a duplicate row. (NULL url rows
+    -- are exempt -- SQLite treats each NULL as distinct, which is fine:
+    -- sources that never set a url don't get this protection, but none
+    -- of the current ingestors omit it.)
+    UNIQUE (ticker_guess, source, url)
 );
 
 CREATE INDEX IF NOT EXISTS idx_raw_items_ticker_time
@@ -88,6 +94,7 @@ CREATE TABLE IF NOT EXISTS events (
     exposure        TEXT NOT NULL DEFAULT '{}',            -- JSON
     interpretation  TEXT NOT NULL DEFAULT '{}',            -- JSON
     market_reaction TEXT NOT NULL DEFAULT '{}',            -- JSON
+    data_quality    TEXT NOT NULL DEFAULT '{"status": "pass", "issues": [], "blocking": false}',  -- JSON
 
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
@@ -105,6 +112,7 @@ CREATE TABLE IF NOT EXISTS evidence (
     published_at  TEXT,
     retrieved_at  TEXT NOT NULL,
     confirmed     INTEGER NOT NULL DEFAULT 0,
+    is_mocked     INTEGER NOT NULL DEFAULT 0,
     raw_item_id   TEXT,
     FOREIGN KEY (event_id) REFERENCES events(event_id) ON DELETE CASCADE,
     FOREIGN KEY (raw_item_id) REFERENCES raw_items(raw_item_id)
@@ -193,13 +201,15 @@ CREATE TABLE IF NOT EXISTS alerts (
     published_at       TEXT,                     -- source publication time, for latency calc
     surprise_score     REAL,
     confidence_score    REAL,
-    confirmation_score  REAL,
+    market_confirmation_score REAL,
     composite_rank_score REAL,
     headline             TEXT,
     expectation_gap       TEXT,
     reaction_summary       TEXT,
     assessment              TEXT,
     risk_note                TEXT,
+    status_badge              TEXT,                      -- LIVE-primary | LIVE-secondary | MOCK | MIXED
+    why_now                    TEXT NOT NULL DEFAULT '[]', -- JSON list
     sources                   TEXT NOT NULL DEFAULT '[]', -- JSON list of urls
     FOREIGN KEY (event_id) REFERENCES events(event_id) ON DELETE CASCADE
 );

@@ -47,6 +47,7 @@ class Evidence(BaseModel):
     published_at: Optional[str] = None
     retrieved_at: str
     confirmed: bool = False
+    is_mocked: bool = False
     raw_item_id: Optional[str] = None
 
 
@@ -73,16 +74,55 @@ class Exposure(BaseModel):
 
 
 class Interpretation(BaseModel):
-    """Derived scores only. Nothing here is a reported fact."""
+    """Derived scores only. Nothing here is a reported fact.
+
+    A single blended "surprise_score" is still computed for ranking, but
+    it must never be the sole basis for a directional label -- an EPS
+    miss alongside a revenue beat is not "negative," it's mixed. See
+    `eps_surprise`/`revenue_surprise` (raw, per-component, signed) and
+    `earnings_direction` (positive | negative | mixed | inconclusive |
+    unknown), computed from component signs directly, never from the
+    blended composite.
+    """
 
     surprise_score: Optional[float] = None
+    eps_surprise: Optional[float] = None       # raw (actual-consensus)/consensus, signed
+    revenue_surprise: Optional[float] = None   # raw (actual-consensus)/consensus, signed
+    earnings_direction: Optional[str] = None   # positive | negative | mixed | inconclusive | unknown
+    surprise_coverage: Optional[float] = None  # fraction of expected components (eps/revenue/guidance) available
+    surprise_components_missing: list[str] = Field(default_factory=list)
+
     novelty_score: Optional[float] = None
     market_sensitivity_score: Optional[float] = None
-    confirmation_score: Optional[float] = None
-    forward_earnings_effect: Optional[str] = None  # positive | negative | neutral
     macro_sensitivity: Optional[str] = None  # low | medium | high
+
+    # Market confirmation is deliberately market-observed-only (abnormal
+    # return, volume, IV, persistence) -- never source quality. Source
+    # quality lives in `confidence` / `primary_source_confirmed` instead.
+    # See scoring/market_confirmation.py.
+    market_confirmation_score: Optional[float] = None
+    market_confirmation_coverage: Optional[float] = None
+    market_confirmation_components_missing: list[str] = Field(default_factory=list)
+
     confidence: Optional[float] = None
+    primary_source_confirmed: bool = False
+    already_priced_in: Optional[bool] = None  # None = not assessed (see scoring/confidence.py)
+
+    why_now: list[str] = Field(default_factory=list)
     verification_flag: bool = False
+
+
+class DataQuality(BaseModel):
+    """Gate checked BEFORE scoring/alerting, not after. See
+    processing/data_quality.py for the actual checks. `blocking=True`
+    (status="reject") means the event is quarantined from immediate
+    alerts -- it still exists, still shows up in the morning brief and
+    the quarantine queue, it just doesn't get to claim the confidence
+    that comes with clearing every check."""
+
+    status: str = "pass"  # pass | warning | reject
+    issues: list[str] = Field(default_factory=list)
+    blocking: bool = False
 
 
 class MarketReaction(BaseModel):
@@ -111,6 +151,7 @@ class Event(BaseModel):
     exposure: Exposure = Field(default_factory=Exposure)
     interpretation: Interpretation = Field(default_factory=Interpretation)
     market_reaction: MarketReaction = Field(default_factory=MarketReaction)
+    data_quality: DataQuality = Field(default_factory=DataQuality)
 
     @staticmethod
     def now_iso() -> str:
@@ -129,6 +170,7 @@ class Event(BaseModel):
             "exposure": self.exposure.model_dump(),
             "interpretation": self.interpretation.model_dump(),
             "market_reaction": self.market_reaction.model_dump(),
+            "data_quality": self.data_quality.model_dump(),
         }
 
     @classmethod
@@ -145,5 +187,6 @@ class Event(BaseModel):
             exposure=Exposure(**(row.get("exposure") or {})),
             interpretation=Interpretation(**(row.get("interpretation") or {})),
             market_reaction=MarketReaction(**(row.get("market_reaction") or {})),
+            data_quality=DataQuality(**(row.get("data_quality") or {})),
             evidence=[Evidence(**e) for e in (evidence or [])],
         )

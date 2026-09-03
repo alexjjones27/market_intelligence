@@ -29,24 +29,32 @@ class ConfidenceInputs:
     num_corroborating_sources: int          # total evidence count for the event
     extraction_completeness: float          # 0..1: fraction of expected fact fields populated
     timestamp_certainty: float              # 0..1: how precisely we know the actual event time
-    already_priced_in: float = 0.0          # 0..1: higher = market already appears to reflect this
+    # True = evidence of pre-event drift/anticipation; False = no such evidence found;
+    # None = not assessed at all. None must NOT be treated as "not priced in" (0.0) --
+    # that would silently claim evidence of absence where there's simply no evidence.
+    # When None, this component is dropped entirely and the remaining weights
+    # renormalize, rather than the score looking more precise than it is.
+    already_priced_in: bool | None = None
     opinion_fraction: float = 0.0           # 0..1: higher = more opinion/analysis, less raw fact
 
 
 def compute_confidence(inputs: ConfidenceInputs) -> float:
     primary_score = 1.0 if inputs.primary_source_confirmed else 0.3
     corroboration_score = min(1.0, inputs.num_corroborating_sources / 4)
-    not_priced_in_score = 1.0 - _clamp(inputs.already_priced_in)
     fact_score = 1.0 - _clamp(inputs.opinion_fraction)
 
-    score = (
-        WEIGHTS["primary_source"] * primary_score
-        + WEIGHTS["corroboration"] * corroboration_score
-        + WEIGHTS["extraction"] * _clamp(inputs.extraction_completeness)
-        + WEIGHTS["timestamp"] * _clamp(inputs.timestamp_certainty)
-        + WEIGHTS["not_priced_in"] * not_priced_in_score
-        + WEIGHTS["fact_based"] * fact_score
-    )
+    weighted: dict[str, tuple[float, float]] = {
+        "primary_source": (WEIGHTS["primary_source"], primary_score),
+        "corroboration": (WEIGHTS["corroboration"], corroboration_score),
+        "extraction": (WEIGHTS["extraction"], _clamp(inputs.extraction_completeness)),
+        "timestamp": (WEIGHTS["timestamp"], _clamp(inputs.timestamp_certainty)),
+        "fact_based": (WEIGHTS["fact_based"], fact_score),
+    }
+    if inputs.already_priced_in is not None:
+        weighted["not_priced_in"] = (WEIGHTS["not_priced_in"], 0.0 if inputs.already_priced_in else 1.0)
+
+    total_weight = sum(w for w, _ in weighted.values())
+    score = sum(w * v for w, v in weighted.values()) / total_weight
     return round(_clamp(score), 4)
 
 

@@ -20,12 +20,22 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
-from market_intel.models.event import Event, EventType, Evidence, SourceTier
+from market_intel.models.event import Event, EventType, Evidence, Facts, SourceTier
 from market_intel.models.raw_item import RawItem
 from market_intel.processing.timestamps import normalize, parse_utc
 
 DEFAULT_TIME_WINDOW = timedelta(hours=48)
 EARNINGS_TIME_WINDOW = timedelta(days=5)  # 8-K + 10-Q for the same release often land days apart
+
+# Hard outer bound on the near-duplicate override below. Without this, two
+# UNRELATED filings that happen to share a generic, templated title (e.g.
+# "ACME CORP 8-K filing (items 2.02, 9.01)" for two different quarters)
+# would near-match on text alone and merge regardless of how far apart they
+# are -- silently treating one quarter's earnings as corroborating evidence
+# for another's. Near-duplicate text is only trusted to reach across the
+# window for genuinely nearby items (e.g. a syndicated article landing a
+# few hours outside the window); past this bound the window rules alone.
+MAX_NEAR_DUPLICATE_GAP = timedelta(days=14)
 
 TIER_RANK = {"primary": 3, "professional": 2, "secondary": 1}
 
@@ -83,8 +93,11 @@ def cluster_raw_items(
             placed = False
             for cluster in open_clusters:
                 anchor_ts = _timestamp_of(cluster.items[0])
-                within_window = (item_ts - anchor_ts) <= window
-                is_dup = any(near_duplicate(item, existing) for existing in cluster.items)
+                gap = item_ts - anchor_ts
+                within_window = gap <= window
+                is_dup = gap <= MAX_NEAR_DUPLICATE_GAP and any(
+                    near_duplicate(item, existing) for existing in cluster.items
+                )
                 if within_window or is_dup:
                     cluster.items.append(item)
                     placed = True
@@ -105,6 +118,30 @@ def _best_company_name(items: list[RawItem]) -> str:
         if item.company_guess:
             return item.company_guess
     return items[0].ticker_guess or "UNKNOWN"
+
+
+def _fiscal_period_end(items: list[RawItem]) -> str | None:
+    for item in items:
+        if item.fiscal_period_end:
+            return item.fiscal_period_end
+    return None
+
+
+def _stable_event_id(ticker: str, event_type: str, timestamp_utc: str) -> str:
+    """Deterministic (uuid5, not uuid4): re-running the pipeline against
+    the same underlying disclosure produces the SAME event_id, so
+    db/repository.py:insert_event can upsert instead of accumulating a
+    duplicate event on every rerun.
+
+    Bucketed to the day. Not perfectly stable: if a later run discovers
+    an evidence item with an earlier timestamp than any seen before, the
+    cluster's earliest-item anchor (and so its date bucket) can shift.
+    True stability would need a persisted cluster identity keyed off
+    something like the primary filing's accession number -- out of
+    scope for this MVP; see README limitations."""
+    date_bucket = timestamp_utc[:10]  # YYYY-MM-DD
+    basis = f"{ticker}|{event_type}|{date_bucket}"
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, basis))
 
 
 def cluster_to_event(cluster: Cluster) -> Event:
@@ -129,13 +166,17 @@ def cluster_to_event(cluster: Cluster) -> Event:
             published_at=it.published_at,
             retrieved_at=it.retrieved_at,
             confirmed=it.confirmed,
+            is_mocked=it.is_mocked,
             raw_item_id=it.raw_item_id,
         )
         for it in cluster.items
     ]
 
+    fiscal_period_end = _fiscal_period_end(cluster.items)
+    facts = Facts(fiscal_period_end=fiscal_period_end) if fiscal_period_end else Facts()
+
     return Event(
-        event_id=str(uuid.uuid4()),
+        event_id=_stable_event_id(cluster.ticker, cluster.event_type, timestamp_utc),
         event_type=event_type,
         company=_best_company_name(cluster.items),
         ticker=cluster.ticker,
@@ -143,6 +184,7 @@ def cluster_to_event(cluster: Cluster) -> Event:
         exchange_local_time=exchange_local_time,
         source_tier=SourceTier(_best_source_tier(cluster.items)),
         evidence=evidence,
+        facts=facts,
     )
 
 

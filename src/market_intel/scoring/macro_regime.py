@@ -29,9 +29,13 @@ REGIME_LABELS: dict[tuple[GrowthState, InflationState], str] = {
     ("down", "down"): "disinflationary_slowdown",
 }
 
-# Expected cross-asset direction by regime. Directional bias only --
-# not a trading signal, just context for interpreting a given event's
-# market-sensitivity score.
+# HISTORICAL TENDENCY by regime, not a forecast or a trading signal --
+# context for interpreting a given event's market-sensitivity score
+# against the prevailing backdrop. These are compact tags (e.g. "up",
+# "mixed_to_negative"), not predictions; every place this is displayed
+# (cli.py's `dashboard`/`macro-regime` commands) labels it explicitly
+# as "historical tendency (pattern, not a forecast)" rather than stating
+# it as what will happen.
 EXPECTED_CROSS_ASSET_DIRECTION: dict[str, dict[str, str]] = {
     "overheat": {
         "equities": "mixed_to_negative",

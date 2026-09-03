@@ -13,6 +13,40 @@ import pandas as pd
 from market_intel.db.database import loads
 
 
+def quarantine_events(conn: sqlite3.Connection, limit: int = 50) -> list[dict]:
+    """Lightweight follow-up queue: every event whose data_quality gate
+    came back warning or reject (see processing/data_quality.py).
+    Nothing here was deleted -- these still show up in the morning
+    brief -- this view exists so a researcher can find every event that
+    needs a second look without scanning the whole ranked list."""
+    rows = conn.execute(
+        """
+        SELECT event_id, event_type, company, ticker, timestamp_utc, source_tier, data_quality
+        FROM events
+        WHERE json_extract(data_quality, '$.status') IN ('warning', 'reject')
+        ORDER BY json_extract(data_quality, '$.status') DESC, timestamp_utc DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    out = []
+    for r in rows:
+        dq = loads(r["data_quality"])
+        out.append(
+            {
+                "event_id": r["event_id"],
+                "ticker": r["ticker"],
+                "company": r["company"],
+                "event_type": r["event_type"],
+                "timestamp_utc": r["timestamp_utc"],
+                "source_tier": r["source_tier"],
+                "status": dq.get("status"),
+                "issues": dq.get("issues", []),
+            }
+        )
+    return out
+
+
 def upcoming_event_calendar(conn: sqlite3.Connection, limit: int = 50) -> list[dict]:
     earnings = conn.execute(
         "SELECT ticker, company, scheduled_at, fiscal_period, confirmed, is_mocked "
@@ -111,6 +145,7 @@ def export_events_table(conn: sqlite3.Connection) -> pd.DataFrame:
         exposure = loads(r["exposure"])
         interp = loads(r["interpretation"])
         mr = loads(r["market_reaction"])
+        dq = loads(r["data_quality"]) if "data_quality" in r.keys() else {}
         flat_rows.append(
             {
                 "event_id": r["event_id"],
@@ -126,11 +161,20 @@ def export_events_table(conn: sqlite3.Connection) -> pd.DataFrame:
                 "guidance_direction": facts.get("guidance_direction"),
                 "sectors": ",".join(exposure.get("sectors", [])),
                 "surprise_score": interp.get("surprise_score"),
+                "eps_surprise": interp.get("eps_surprise"),
+                "revenue_surprise": interp.get("revenue_surprise"),
+                "earnings_direction": interp.get("earnings_direction"),
+                "surprise_coverage": interp.get("surprise_coverage"),
                 "novelty_score": interp.get("novelty_score"),
                 "market_sensitivity_score": interp.get("market_sensitivity_score"),
-                "confirmation_score": interp.get("confirmation_score"),
+                "market_confirmation_score": interp.get("market_confirmation_score"),
+                "market_confirmation_coverage": interp.get("market_confirmation_coverage"),
                 "confidence": interp.get("confidence"),
+                "primary_source_confirmed": interp.get("primary_source_confirmed"),
+                "already_priced_in": interp.get("already_priced_in"),
                 "verification_flag": interp.get("verification_flag"),
+                "data_quality_status": dq.get("status"),
+                "data_quality_issues": ",".join(dq.get("issues", [])),
                 "return_5m": mr.get("return_5m"),
                 "return_1h": mr.get("return_1h"),
                 "return_1d": mr.get("return_1d"),

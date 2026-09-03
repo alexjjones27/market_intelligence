@@ -103,7 +103,9 @@ def test_pipeline_runs_end_to_end_on_watchlist_tickers(tmp_path):
     for event in result["events"]:
         assert event.event_type.value == "earnings"
         assert event.interpretation.confidence is not None
-        assert event.interpretation.confirmation_score is not None
+        assert event.interpretation.market_confirmation_score is not None
+        assert event.interpretation.earnings_direction in ("positive", "negative", "mixed", "inconclusive", "unknown")
+        assert event.data_quality.status in ("pass", "warning", "reject")
         # synthetic prices drift steadily upward -> should see a populated, positive 5m return
         assert event.market_reaction.return_5m is not None
         assert event.market_reaction.return_5m > 0
@@ -123,7 +125,7 @@ def test_pipeline_runs_end_to_end_on_watchlist_tickers(tmp_path):
     assert alert_count > 0
 
 
-def test_pipeline_is_idempotent_about_not_crashing_on_rerun(tmp_path):
+def test_pipeline_rerun_is_idempotent_not_just_non_crashing(tmp_path):
     db_path = str(tmp_path / "e2e_rerun.db")
     tickers = ["AAPL"]
 
@@ -132,3 +134,18 @@ def test_pipeline_is_idempotent_about_not_crashing_on_rerun(tmp_path):
 
     assert len(first["events"]) == 1
     assert len(second["events"]) == 1
+    # same underlying disclosure -> same deterministic event_id, not a fresh uuid4 each run
+    assert first["events"][0].event_id == second["events"][0].event_id
+
+    with connect(db_path) as conn:
+        event_count = conn.execute("SELECT COUNT(*) AS c FROM events").fetchone()["c"]
+        raw_item_count = conn.execute("SELECT COUNT(*) AS c FROM raw_items").fetchone()["c"]
+        evidence_count = conn.execute(
+            "SELECT COUNT(*) AS c FROM evidence WHERE event_id = ?", (first["events"][0].event_id,)
+        ).fetchone()["c"]
+
+    # a second run against the same tickers/window must not double the
+    # events table, the raw_items audit log, or the evidence chain
+    assert event_count == 1
+    assert raw_item_count == len(_fake_sec_fetch(None, tickers))
+    assert evidence_count == len(first["events"][0].evidence)
