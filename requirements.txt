@@ -1,0 +1,21 @@
+# Core
+requests>=2.31
+pydantic>=2.6
+python-dotenv>=1.0
+click>=8.1
+python-dateutil>=2.8
+
+# Data / export
+pandas>=2.1
+pyarrow>=14.0
+
+# SEC filing parsing
+beautifulsoup4>=4.12
+lxml>=5.1
+
+tzdata>=2024.1
+
+# Dev / test
+pytest>=8.0
+pytest-cov>=4.1
+freezegun>=1.4

@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "market-intel"
+version = "0.1.0"
+description = "Event-driven market intelligence and ranking system for US-listed equities (MVP)"
+requires-python = ">=3.10"
+readme = "README.md"
+dependencies = [
+    "requests>=2.31",
+    "pydantic>=2.6",
+    "python-dotenv>=1.0",
+    "click>=8.1",
+    "python-dateutil>=2.8",
+    "pandas>=2.1",
+    "pyarrow>=14.0",
+    "beautifulsoup4>=4.12",
+    "lxml>=5.1",
+    "tzdata>=2024.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=4.1",
+    "freezegun>=1.4",
+]
+
+[project.scripts]
+market-intel = "market_intel.cli:cli"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

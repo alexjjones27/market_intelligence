@@ -1,0 +1,9 @@
+{
+  "tickers": [
+    {"ticker": "AAPL", "company": "Apple Inc.", "cik": "0000320193", "sector": "technology_hardware"},
+    {"ticker": "MSFT", "company": "Microsoft Corporation", "cik": "0000789019", "sector": "software"},
+    {"ticker": "NVDA", "company": "NVIDIA Corporation", "cik": "0001045810", "sector": "semiconductors"},
+    {"ticker": "JPM", "company": "JPMorgan Chase & Co.", "cik": "0000019617", "sector": "banks"},
+    {"ticker": "XOM", "company": "Exxon Mobil Corporation", "cik": "0000034088", "sector": "energy"}
+  ]
+}

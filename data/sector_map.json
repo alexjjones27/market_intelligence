@@ -1,0 +1,50 @@
+{
+  "_comment": "Static ticker -> sector -> read-through mapping. MVP v1: hand-maintained, easy to extend by adding rows. Not inferred dynamically.",
+  "semiconductors": {
+    "sector_etfs": ["SMH", "SOXX"],
+    "commodities": ["copper"],
+    "rate_sensitivity": "high",
+    "fx_sensitivity": ["USD/TWD", "USD/JPY"],
+    "members": {
+      "NVDA": {"peers": ["AMD", "AVGO", "QCOM"], "countries": ["United States", "Taiwan"]},
+      "AMD": {"peers": ["NVDA", "AVGO", "QCOM"], "countries": ["United States"]},
+      "AVGO": {"peers": ["NVDA", "AMD", "QCOM"], "countries": ["United States"]}
+    }
+  },
+  "technology_hardware": {
+    "sector_etfs": ["XLK", "QQQ"],
+    "commodities": [],
+    "rate_sensitivity": "medium",
+    "fx_sensitivity": ["USD/CNY", "USD/EUR"],
+    "members": {
+      "AAPL": {"peers": ["MSFT", "GOOGL"], "countries": ["United States", "China"]}
+    }
+  },
+  "software": {
+    "sector_etfs": ["XLK", "IGV"],
+    "commodities": [],
+    "rate_sensitivity": "high",
+    "fx_sensitivity": ["USD/EUR"],
+    "members": {
+      "MSFT": {"peers": ["GOOGL", "ORCL", "CRM"], "countries": ["United States"]}
+    }
+  },
+  "banks": {
+    "sector_etfs": ["XLF", "KBE"],
+    "commodities": [],
+    "rate_sensitivity": "high",
+    "fx_sensitivity": [],
+    "members": {
+      "JPM": {"peers": ["BAC", "WFC", "C"], "countries": ["United States"]}
+    }
+  },
+  "energy": {
+    "sector_etfs": ["XLE", "OIH"],
+    "commodities": ["crude_oil_wti", "natural_gas"],
+    "rate_sensitivity": "low",
+    "fx_sensitivity": ["USD index"],
+    "members": {
+      "XOM": {"peers": ["CVX", "COP"], "countries": ["United States"]}
+    }
+  }
+}
