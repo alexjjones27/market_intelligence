@@ -13,6 +13,23 @@ execution or autonomous buy/sell logic anywhere in this codebase.
 fields on every event so inference is never confused with reported data. See
 `src/market_intel/models/event.py`.
 
+## Companion subsystem: `alpha_lab` (quant backtest replication)
+
+This repository also carries **`alpha_lab`**, a separate subsystem that
+replicates and stress-tests the three-stage framework from Kou et al.,
+*Automate Strategy Finding with LLM in Quant Investment* (Findings of EMNLP
+2025), on point-in-time S&P 500 data. It shares nothing with the event pipeline
+above except the repository -- different package (`src/alpha_lab/`), different
+dependencies (`requirements-alpha-lab.txt`), different tests
+(`tests/alphalab/`).
+
+See **[ALPHA_LAB.md](ALPHA_LAB.md)** for the design, the data provenance, the
+leakage audit, and what the replication found about the paper's own
+construction. Results live in [reports/RESULTS.md](reports/RESULTS.md).
+
+Like the rest of this repository, it contains no trading execution and no
+autonomous buy/sell logic: it is a backtest and a measurement harness.
+
 ## Data integrity, not just data source honesty (v2)
 
 A round of review against real pipeline output found that "the data sources
