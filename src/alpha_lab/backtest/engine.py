@@ -115,8 +115,10 @@ def run_pipeline_fold(
 
     predictions = model.predict(features_test)
     scores = _scores_from_predictions(predictions, test_dates, panel.tickers)
-    weights = build_topk_dropn_weights(scores, panel.tradeable.loc[test_dates], cfg)
-    result = run_portfolio(weights, panel["returns"].loc[test_dates], cfg)
+    weights, trade_counts = build_topk_dropn_weights(
+        scores, panel.tradeable.loc[test_dates], cfg
+    )
+    result = run_portfolio(weights, panel["returns"].loc[test_dates], cfg, trade_counts)
 
     return FoldRun(
         fold, variant, result, selection=selection, model=model,
@@ -159,8 +161,10 @@ def run_all_alphas_fold(
         return FoldRun(fold, "no_agents_all_alphas", None, notes="MLP could not be fitted")
 
     scores = _scores_from_predictions(model.predict(f_test), test_dates, panel.tickers)
-    weights = build_topk_dropn_weights(scores, panel.tradeable.loc[test_dates], cfg)
-    result = run_portfolio(weights, panel["returns"].loc[test_dates], cfg)
+    weights, trade_counts = build_topk_dropn_weights(
+        scores, panel.tradeable.loc[test_dates], cfg
+    )
+    result = run_portfolio(weights, panel["returns"].loc[test_dates], cfg, trade_counts)
     return FoldRun(fold, "no_agents_all_alphas", result, model=model,
                    extras={"n_selected": len(names)})
 
@@ -179,8 +183,10 @@ def run_single_alpha_fold(
 
     test_dates = _window_dates(panel.dates, fold.test_start, fold.test_end)
     scores = alpha_panel.normalized[name].loc[test_dates] * sign
-    weights = build_topk_dropn_weights(scores, panel.tradeable.loc[test_dates], cfg)
-    result = run_portfolio(weights, panel["returns"].loc[test_dates], cfg)
+    weights, trade_counts = build_topk_dropn_weights(
+        scores, panel.tradeable.loc[test_dates], cfg
+    )
+    result = run_portfolio(weights, panel["returns"].loc[test_dates], cfg, trade_counts)
     return FoldRun(fold, "single_alpha", result,
                    extras={"alpha": name, "sign": sign, "n_selected": 1})
 
@@ -211,8 +217,10 @@ def run_gbm_fold(
 
     predictions = baselines.predict_frame(model, f_test, selection.alphas)
     scores = _scores_from_predictions(predictions, test_dates, panel.tickers)
-    weights = build_topk_dropn_weights(scores, panel.tradeable.loc[test_dates], cfg)
-    result = run_portfolio(weights, panel["returns"].loc[test_dates], cfg)
+    weights, trade_counts = build_topk_dropn_weights(
+        scores, panel.tradeable.loc[test_dates], cfg
+    )
+    result = run_portfolio(weights, panel["returns"].loc[test_dates], cfg, trade_counts)
     return FoldRun(fold, "gbm", result, selection=selection,
                    extras={"n_selected": len(selection.alphas)})
 

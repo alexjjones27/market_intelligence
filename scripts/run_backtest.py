@@ -126,6 +126,16 @@ def main() -> None:
     stitched_turnover = {v: stitch_turnover(runs, v) for v in variants}
     stitched_costs = {v: stitch_costs(runs, v) for v in variants}
 
+    # Written before any analysis step: the walk-forward is ~50 minutes of
+    # compute and a later failure must not throw it away. The previous run
+    # completed every fold and then lost the daily series to a crash in
+    # stitching, which is exactly what this ordering prevents.
+    pd.DataFrame(stitched_net).to_csv(REPORTS / "results_daily_returns_net.csv")
+    pd.DataFrame(stitched_gross).to_csv(REPORTS / "results_daily_returns_gross.csv")
+    pd.DataFrame(stitched_turnover).to_csv(REPORTS / "results_daily_turnover.csv")
+    pd.DataFrame(stitched_costs).to_csv(REPORTS / "results_daily_costs.csv")
+    logging.info("daily series persisted before analysis")
+
     oos_index = stitched_net["full"].index
     bench = baselines.benchmark_returns(panel).reindex(oos_index)
     bench["universe_equal_weight"] = baselines.equal_weight_universe_returns(panel).reindex(oos_index)
@@ -229,6 +239,7 @@ def main() -> None:
 
     # ------------------------------------------------------ Table 9 weight sweep
     if not args.skip_sweep:
+      try:
         sweep_rows = []
         ladder = [(1.0, 0.0), (0.8, 0.2), (0.6, 0.4), (0.5, 0.5), (0.4, 0.6), (0.2, 0.8), (0.0, 1.0)]
         # One restart per fit here: the ladder is 7x the work of the main run and
@@ -251,9 +262,9 @@ def main() -> None:
             sweep_rows.append(s)
             logging.info("sweep wc=%.1f wr=%.1f -> net Sharpe %.3f", wc, wr, s["sharpe"])
         pd.DataFrame(sweep_rows).to_csv(REPORTS / "results_weight_sweep.csv", index=False)
+      except Exception:
+        logging.exception("weight sweep failed; main results are already written")
 
-    # ------------------------------------------------------ persist return series
-    pd.DataFrame(stitched_net).to_csv(REPORTS / "results_daily_returns_net.csv")
     bench.to_csv(REPORTS / "results_daily_benchmarks.csv")
 
     meta = {

@@ -54,8 +54,14 @@ class BacktestResult:
 
 def build_topk_dropn_weights(
     scores: pd.DataFrame, tradeable: pd.DataFrame, cfg: Config
-) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, pd.Series]:
     """Target weights from a composite alpha panel, honouring the drop-n cap.
+
+    Returns ``(weights, trade_counts)``. The trade count is returned rather than
+    stashed on ``weights.attrs``: pandas propagates ``attrs`` through arithmetic,
+    and ``pd.concat`` then compares them with ``==``, which raises on a Series
+    ("truth value is ambiguous"). Carrying a Series in ``attrs`` therefore poisons
+    every downstream concat of the resulting returns.
 
     ``scores`` is (date x ticker); higher is better. Rows where a name is not
     tradeable are ignored, and a held name that becomes untradeable is dropped
@@ -117,12 +123,14 @@ def build_topk_dropn_weights(
             weights.loc[date, held] = 1.0 / len(held)
         trade_counts.loc[date] = len(discretionary_out) + forced_out + len(buys)
 
-    weights.attrs["n_trades"] = trade_counts
-    return weights
+    return weights, trade_counts
 
 
 def run_portfolio(
-    weights: pd.DataFrame, returns: pd.DataFrame, cfg: Config
+    weights: pd.DataFrame,
+    returns: pd.DataFrame,
+    cfg: Config,
+    trade_counts: pd.Series | None = None,
 ) -> BacktestResult:
     """Turn target weights into a realised return series, net of costs.
 
@@ -150,7 +158,8 @@ def run_portfolio(
     costs = weight_change * one_way_bps / 1e4
     net = gross - costs
 
-    n_trades = weights.attrs.get("n_trades", pd.Series(0, index=weights.index))
+    if trade_counts is None:
+        trade_counts = pd.Series(0, index=weights.index)
     return BacktestResult(
         gross_returns=gross,
         net_returns=net,
@@ -158,5 +167,5 @@ def run_portfolio(
         costs=costs,
         weights=effective,
         holdings_count=(effective > 0).sum(axis=1),
-        n_trades=n_trades.reindex(gross.index).fillna(0).astype(int),
+        n_trades=trade_counts.reindex(gross.index).fillna(0).astype(int),
     )

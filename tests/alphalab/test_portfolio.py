@@ -14,6 +14,10 @@ from alpha_lab.config import Config
 from alpha_lab.portfolio.construction import build_topk_dropn_weights, run_portfolio
 
 
+def weights_only(scores, tradeable, cfg):
+    return build_topk_dropn_weights(scores, tradeable, cfg)[0]
+
+
 @pytest.fixture
 def scores_frame():
     dates = pd.bdate_range("2021-01-04", periods=30)
@@ -29,7 +33,7 @@ def tradeable_frame(scores_frame):
 
 def test_holds_exactly_top_k_once_warmed_up(scores_frame, tradeable_frame):
     cfg = Config().replace(portfolio={"top_k": 13, "drop_n": 5})
-    weights = build_topk_dropn_weights(scores_frame, tradeable_frame, cfg)
+    weights = weights_only(scores_frame, tradeable_frame, cfg)
     counts = (weights > 0).sum(axis=1)
     assert counts.iloc[0] == 13          # first day fills straight to k
     assert (counts.iloc[1:] == 13).all()
@@ -37,7 +41,7 @@ def test_holds_exactly_top_k_once_warmed_up(scores_frame, tradeable_frame):
 
 def test_weights_are_equal_and_sum_to_one(scores_frame, tradeable_frame):
     cfg = Config()
-    weights = build_topk_dropn_weights(scores_frame, tradeable_frame, cfg)
+    weights = weights_only(scores_frame, tradeable_frame, cfg)
     row = weights.iloc[5]
     held = row[row > 0]
     assert row.sum() == pytest.approx(1.0)
@@ -48,7 +52,7 @@ def test_daily_name_changes_respect_the_drop_n_cap(scores_frame, tradeable_frame
     """Scores are reshuffled every day, so an uncapped rule would replace the
     whole book; the cap must hold it to n."""
     cfg = Config().replace(portfolio={"top_k": 13, "drop_n": 5})
-    weights = build_topk_dropn_weights(scores_frame, tradeable_frame, cfg)
+    weights = weights_only(scores_frame, tradeable_frame, cfg)
     held = weights > 0
     for i in range(2, len(weights)):
         previous = set(held.columns[held.iloc[i - 1]])
@@ -60,11 +64,11 @@ def test_untradeable_names_are_dropped_even_past_the_cap(scores_frame, tradeable
     """A suspended or delisted name is not a position you get to keep."""
     cfg = Config().replace(portfolio={"top_k": 13, "drop_n": 1})
     tradeable = tradeable_frame.copy()
-    weights_before = build_topk_dropn_weights(scores_frame, tradeable, cfg)
+    weights_before = weights_only(scores_frame, tradeable, cfg)
     held_day5 = list(weights_before.columns[weights_before.iloc[5] > 0])
 
     tradeable.iloc[6:, tradeable.columns.get_indexer(held_day5[:6])] = False
-    weights = build_topk_dropn_weights(scores_frame, tradeable, cfg)
+    weights = weights_only(scores_frame, tradeable, cfg)
     still_held = set(weights.columns[weights.iloc[6] > 0]) & set(held_day5[:6])
     assert not still_held
 
@@ -133,7 +137,7 @@ def test_a_static_book_incurs_no_turnover_or_cost():
 
 def test_net_return_is_gross_minus_cost(scores_frame, tradeable_frame):
     cfg = Config()
-    weights = build_topk_dropn_weights(scores_frame, tradeable_frame, cfg)
+    weights = weights_only(scores_frame, tradeable_frame, cfg)
     rng = np.random.default_rng(9)
     returns = pd.DataFrame(
         rng.normal(0, 0.01, size=scores_frame.shape),
@@ -150,8 +154,44 @@ def test_turnover_cannot_exceed_the_structural_limit(scores_frame, tradeable_fra
     """One-way turnover is bounded by drop_n / top_k plus drift."""
     cfg = Config().replace(portfolio={"top_k": 13, "drop_n": 5,
                                       "cost_bps": 0.0, "slippage_bps": 0.0})
-    weights = build_topk_dropn_weights(scores_frame, tradeable_frame, cfg)
+    weights = weights_only(scores_frame, tradeable_frame, cfg)
     returns = pd.DataFrame(0.0, index=scores_frame.index, columns=scores_frame.columns)
     result = run_portfolio(weights, returns, cfg)
     steady = result.turnover.iloc[4:]
     assert steady.max() <= 5 / 13 + 1e-9
+
+
+def test_result_series_can_be_concatenated_across_folds(scores_frame, tradeable_frame):
+    """Stitching folds must not blow up on pandas `attrs`.
+
+    Trade counts used to ride along on ``weights.attrs``. pandas propagates
+    ``attrs`` through arithmetic, so the resulting return series carried a Series
+    in theirs, and ``pd.concat`` compares attrs with ``==`` -- which raises
+    "truth value of a Series is ambiguous". That surfaced only at the very end of
+    a two-hour walk-forward, after every fold had been computed.
+    """
+    cfg = Config()
+    rng = np.random.default_rng(11)
+    returns = pd.DataFrame(
+        rng.normal(0, 0.01, size=scores_frame.shape),
+        index=scores_frame.index, columns=scores_frame.columns,
+    )
+    weights, trades = build_topk_dropn_weights(scores_frame, tradeable_frame, cfg)
+    first = run_portfolio(weights.iloc[:15], returns.iloc[:15], cfg, trades.iloc[:15])
+    second = run_portfolio(weights.iloc[15:], returns.iloc[15:], cfg, trades.iloc[15:])
+
+    stitched = pd.concat([first.net_returns, second.net_returns]).sort_index()
+    assert len(stitched) == len(scores_frame)
+    assert stitched.notna().all()
+    # Every field a caller might stitch must survive the same treatment.
+    for attribute in ("gross_returns", "turnover", "costs", "n_trades"):
+        joined = pd.concat([getattr(first, attribute), getattr(second, attribute)])
+        assert len(joined) == len(scores_frame)
+
+
+def test_trade_counts_are_returned_not_hidden_in_attrs(scores_frame, tradeable_frame):
+    cfg = Config()
+    weights, trades = build_topk_dropn_weights(scores_frame, tradeable_frame, cfg)
+    assert "n_trades" not in weights.attrs
+    assert len(trades) == len(scores_frame)
+    assert trades.iloc[0] == cfg.portfolio.top_k  # initial build from cash
