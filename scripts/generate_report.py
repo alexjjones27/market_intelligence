@@ -67,6 +67,22 @@ def paper_comparison_table(folds: pd.DataFrame) -> str:
 # Validated categorical palette (see the dataviz reference palette). Only the
 # first four slots are used; benchmarks are deliberately neutral grey rather
 # than a fifth hue, because they are reference lines, not peer series.
+
+# Short legend labels. The direct labels at each line end already carry the full
+# name, so the legend only has to disambiguate colour, and long strings there
+# collide with each other at any sensible column count.
+SHORT_LABELS = {
+    "full": "Full pipeline",
+    "no_csa": "No confidence agent",
+    "no_rpa": "No risk agent",
+    "single_alpha": "Best single alpha",
+    "gbm": "Gradient boosting",
+    "no_agents_all_alphas": "MLP, all alphas",
+    "universe_equal_weight": "Equal-weight universe",
+    "sp500_cap_weight": "S&P 500 (SPY)",
+}
+
+
 SERIES = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100"]
 INK = "#0b0b0b"
 INK_MUTED = "#52514e"
@@ -183,13 +199,13 @@ def plot_equity_curves(returns: pd.DataFrame, bench: pd.DataFrame, out: Path) ->
     handles = [plt.Line2D([], [], color=SERIES[i], linewidth=2.0) for i in range(len(wanted))]
     handles += [plt.Line2D([], [], color=BENCH_GREY, linewidth=1.6,
                            linestyle="--" if i else "-") for i in range(len(bench_wanted))]
-    labels = [LABELS.get(n, n) for n in wanted] + [LABELS.get(n, n) for n in bench_wanted]
+    labels = [SHORT_LABELS.get(n, n) for n in wanted + bench_wanted]
     # Legend above the plot area rather than inside it: an in-axes legend
     # collides with whichever series happens to run into that corner, and which
     # corner is safe changes with the data.
-    ax.legend(handles, labels, loc="lower left", bbox_to_anchor=(0, 1.01, 1, 0.12),
-              mode="expand", ncol=3, frameon=False, fontsize=9,
-              labelcolor=INK_MUTED, borderaxespad=0)
+    ax.legend(handles, labels, loc="lower left", bbox_to_anchor=(0, 1.005),
+              ncol=3, frameon=False, fontsize=9, labelcolor=INK_MUTED,
+              borderaxespad=0, columnspacing=1.6, handlelength=1.6)
     fig.subplots_adjust(right=0.78)
     fig.savefig(out, dpi=120, facecolor=SURFACE, bbox_inches="tight")
     plt.close(fig)
@@ -210,18 +226,17 @@ def plot_fold_returns(folds: pd.DataFrame, out: Path) -> None:
     _style_axes(ax)
     # 2px surface gap between adjacent bars comes from the width/offset pair.
     ax.bar(x - width / 2 - 0.01, sub["cum_return_net"] * 100, width,
-           color=SERIES[0], zorder=3, label=LABELS["full"])
+           color=SERIES[0], zorder=3, label=SHORT_LABELS["full"])
     ax.bar(x + width / 2 + 0.01, ew["cum_return_net"].to_numpy() * 100, width,
-           color=SERIES[1], zorder=3, label=LABELS["single_alpha"])
+           color=SERIES[1], zorder=3, label=SHORT_LABELS["single_alpha"])
     ax.axhline(0, color=INK_MUTED, linewidth=1.0, zorder=4)
     ax.set_xticks(x)
     ax.set_xticklabels(sub["test_window"], rotation=20, ha="right", fontsize=8)
     ax.set_ylabel("cumulative return over the fold, net (%)", color=INK_MUTED, fontsize=10)
     ax.set_title("Per-fold out-of-sample return: the dispersion a single test window hides",
                  color=INK, fontsize=13, loc="left", pad=32)
-    ax.legend(loc="lower left", bbox_to_anchor=(0, 1.01, 1, 0.1), mode="expand",
-              ncol=2, frameon=False, fontsize=9, labelcolor=INK_MUTED,
-              borderaxespad=0)
+    ax.legend(loc="lower left", bbox_to_anchor=(0, 1.005), ncol=2, frameon=False,
+              fontsize=9, labelcolor=INK_MUTED, borderaxespad=0, handlelength=1.6)
     fig.savefig(out, dpi=120, facecolor=SURFACE, bbox_inches="tight")
     plt.close(fig)
 
@@ -430,11 +445,19 @@ def main() -> None:
         add("")
         best = sweep.loc[sweep["sharpe"].idxmax()]
         add(f"Best ratio here is **{best['w_confidence']:.1f}/{best['w_risk']:.1f}** "
-            f"(net Sharpe {_num(best['sharpe'])}), against the paper's 0.6/0.4. "
-            f"The spread across the whole ladder is "
-            f"{_num(sweep['sharpe'].min())} to {_num(sweep['sharpe'].max())}. "
-            f"worth weighing against the possibility that picking the best cell of a "
-            f"seven-row sweep is itself a selection effect.\n")
+            f"(net Sharpe {_num(best['sharpe'])}), not the paper's 0.6/0.4. The whole "
+            f"ladder spans {_num(sweep['sharpe'].min())} to {_num(sweep['sharpe'].max())}.\n")
+        if sweep["sharpe"].max() < 0.5:
+            add("Read that spread against the bootstrap intervals above, which are "
+                "roughly a full Sharpe point wide. Every cell in this ladder sits "
+                "inside the noise band of every other cell, so the ordering carries "
+                "no information. The paper reports the same sweep with Sharpe ratios "
+                "from -8.04 to 11.39 and treats the ranking as meaningful; a ladder "
+                "that swings that violently on a weight change is better read as "
+                "evidence of an unstable objective than as a tuning result.\n")
+        else:
+            add("Picking the best cell of a seven-row sweep is itself a selection "
+                "effect, which is why the whole ladder is printed.\n")
     else:
         add("_Sweep not run._\n")
 
@@ -478,15 +501,34 @@ def main() -> None:
         + ("significant at the 5% level." if excess_significant
            else "**not** significant at the 5% level.")
     )
+    if sector_alpha_significant and sector_alpha < 0:
+        alpha_reading = (
+            "which is significantly **negative**. This is a stronger statement than "
+            "'no alpha': after accounting for market beta and sector exposure, the "
+            "strategy destroyed value at a rate that passes conventional "
+            "significance. The signal is not merely absent, it is adverse."
+        )
+    elif sector_alpha_significant:
+        alpha_reading = (
+            "which is significantly positive and therefore not explained by market "
+            "or sector exposure."
+        )
+    else:
+        alpha_reading = (
+            "which does **not** survive conventional significance. On this evidence "
+            "the return is accounted for by market and sector exposure rather than "
+            "by factor selection."
+        )
     verdict.append(
         "Once market beta and eleven sector portfolios are regressed out, the "
         f"unexplained annual alpha is **{_pct(sector_alpha)}** (t = {_num(sector_t)}), "
-        + ("which does survive conventional significance."
-           if sector_alpha_significant else
-           "which does **not** survive conventional significance. On this evidence the "
-           "return is accounted for by market and sector exposure rather than by "
-           "factor selection.")
+        + alpha_reading
     )
+    if np.isfinite(beta) and beta > 1.05:
+        verdict.append(
+            f"Its market beta is **{_num(beta)}**, so it carried *more* market risk "
+            "than the index while delivering less return."
+        )
     for line in verdict:
         add("- " + line)
     add("")

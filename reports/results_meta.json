@@ -1,0 +1,13 @@
+{
+  "config": "configs/default.yaml",
+  "n_folds": 7,
+  "oos_start": "2021-01-04",
+  "oos_end": "2024-06-28",
+  "n_alphas_usable": 81,
+  "cost_bps_per_side": 10.0,
+  "top_k": 13,
+  "drop_n": 5,
+  "ic_horizon": 5,
+  "w_confidence": 0.6,
+  "w_risk": 0.4
+}
