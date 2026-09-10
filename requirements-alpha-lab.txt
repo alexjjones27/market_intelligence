@@ -1,0 +1,20 @@
+# Dependencies for the alpha_lab backtest subsystem (see ALPHA_LAB.md).
+# Kept separate from requirements.txt so the market_intel MVP stays lightweight.
+
+numpy>=1.26
+pandas>=2.1
+scipy>=1.11
+scikit-learn>=1.4
+statsmodels>=0.14
+torch>=2.2
+pyarrow>=14.0
+requests>=2.31
+PyYAML>=6.0
+matplotlib>=3.8
+
+# Wikipedia revision parsing for point-in-time index membership
+lxml>=5.1
+beautifulsoup4>=4.12
+html5lib>=1.1
+
+pytest>=8.0

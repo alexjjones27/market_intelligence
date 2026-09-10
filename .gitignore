@@ -15,3 +15,8 @@ exports/*.parquet
 .coverage
 htmlcov/
 .DS_Store
+
+# alpha_lab data cache: ~50MB of fetched parquet/pickle, fully reproducible
+# from scripts/build_panel.py. Never commit market data.
+data/cache/
+reports/*.png

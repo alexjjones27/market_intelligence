@@ -1,0 +1,116 @@
+# Default configuration for the alpha_lab replication.
+#
+# Everything the paper leaves as a knob -- top-k/drop-n, the CSA/RPA weights,
+# the IC horizon, the walk-forward geometry, costs -- lives here. Core logic
+# reads these and never hard-codes them, so a sweep is a config change.
+
+data:
+  # Pull starts a year before the backtest so the longest lookbacks (STD 50,
+  # EMA 26, the 252-day growth lag) are warm on the first traded day.
+  start: "2018-01-01"
+  end: "2024-06-30"
+  backtest_start: "2019-01-01"
+  cache_dir: "data/cache"
+  price_source: "yahoo"
+  fundamentals_source: "sec_edgar"
+  macro_source: "fred"
+  max_universe_size: null
+  # SEC requires a descriptive User-Agent with contact details on every request.
+  sec_user_agent: "alpha_lab research (alexjoneswork05@gmail.com)"
+  request_sleep_s: 0.12
+  min_price: 3.0
+  min_dollar_volume: 1000000.0
+
+universe:
+  name: "sp500"
+  # Reconstructed from dated Wikipedia revisions. Setting this false applies
+  # today's membership to all history, which is survivorship bias -- available
+  # only so its size can be measured.
+  point_in_time: true
+  membership_buffer_days: 0
+
+alphas:
+  categories:
+    - momentum
+    - mean_reversion
+    - volatility
+    - fundamental
+    - liquidity
+    - quality
+    - growth
+    - technical
+    - macro
+  include_unavailable: false
+  winsorize_quantile: 0.01
+  cross_sectional_normalize: "zscore"
+  min_cross_section: 20
+  fundamental_growth_lag_days: 252
+  earnings_stability_window: 315
+
+csa:
+  ic_horizon: 5
+  method: "spearman"
+  window: "rolling"
+  window_days: 252
+  min_periods: 60
+  confidence_threshold: 0.0
+
+rpa:
+  lookback_days: 252
+  min_periods: 60
+  spread_quantile: 0.2
+  w_volatility: 0.34
+  w_drawdown: 0.33
+  w_ic_stability: 0.33
+  ic_stability_window: 63
+
+selection:
+  # Paper's Table 9 "best" configuration. scripts/sweep_agent_weights.py runs
+  # the full 1.0/0.0 .. 0.0/1.0 ladder rather than taking this on faith.
+  w_confidence: 0.6
+  w_risk: 0.4
+  threshold: 0.0
+  per_category: 1
+  use_csa: true
+  use_rpa: true
+
+mlp:
+  # Table 10's reported optimum.
+  hidden_nodes: 10
+  learning_rate: 0.001
+  batch_size: 32
+  weight_decay: 0.001
+  max_epochs: 200
+  patience: 20
+  seed: 17
+  n_restarts: 3
+  target_horizon: 5
+  standardize_target: true
+
+portfolio:
+  # Appendix A.8.
+  top_k: 13
+  drop_n: 5
+  weighting: "equal"
+  # The paper models no costs at all. At ~38% daily turnover that omission is
+  # worth double-digit annual percentage points; results are reported both ways.
+  cost_bps: 5.0
+  slippage_bps: 5.0
+  execution_lag_days: 1
+
+walkforward:
+  train_months: 18
+  validation_months: 6
+  test_months: 6
+  step_months: 6
+  start: "2019-01-01"
+  end: "2024-06-30"
+  paper_replication_folds: true
+
+evaluation:
+  risk_free_rate: 0.02
+  trading_days: 252
+  bootstrap_iterations: 2000
+  bootstrap_block_size: 21
+  hac_max_lags: null
+  seed: 17

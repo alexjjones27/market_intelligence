@@ -1,0 +1,93 @@
+name,category,formula,available,scale_free,duplicate_of,notes
+price_momentum,momentum,"(CLOSE - DELAY(CLOSE, 14))",True,False,,"Dollar change, not a return: a $500 stock outranks a $20 stock for arithmetic reasons. Compare with momentum_oscillator, its scale-free twin."
+volume_momentum,momentum,"(VOLUME - DELAY(VOLUME, 14))",True,False,,Share-count change; dominated by large-float names.
+rsi_momentum,momentum,"(RSI - DELAY(RSI, 14))",True,True,,
+roc,momentum,"((CLOSE / DELAY(CLOSE, 14)) - 1)",True,True,,Algebraically identical to momentum_oscillator below; A.3 lists both.
+macd_momentum,momentum,"(MACD - DELAY(MACD, 14))",True,False,,"MACD is an EMA difference in dollars, so it scales with price."
+momentum_oscillator,momentum,"((CLOSE - DELAY(CLOSE, 14)) / DELAY(CLOSE, 14))",True,True,roc,"Identical expression to roc. Kept so the category count matches A.3, but a 'diversified' selection picking both is picking one factor twice."
+cmo,momentum,"(SUM(IF(CLOSE-DELAY(CLOSE,1)>0, CLOSE-DELAY(CLOSE,1), 0), 14) - SUM(IF(...<0, ...,0),14)) / (SUM(...)+SUM(...)) * 100",True,True,,
+smi,momentum,"((CLOSE - MIN(LOW,14)) - (MAX(HIGH,14) - CLOSE)) / (MAX(HIGH,14) - MIN(LOW,14))",True,True,,
+atr_momentum,momentum,"(ATR - DELAY(ATR, 14))",True,False,,
+dpo,momentum,"(CLOSE - DELAY(SMA(CLOSE, 14), 7))",True,False,,The worked example in A.1/Figure 4. Dollar-denominated.
+adx_momentum,momentum,"(ADX - DELAY(ADX, 14))",True,True,,
+mean_reversion,mean_reversion,"(MEAN(CLOSE, 20) - CLOSE)",True,False,,"MEAN and SMA are the same operator, so this is identical to ma_reversion."
+zscore_reversion,mean_reversion,"(CLOSE - MEAN(CLOSE, 20)) / STD(CLOSE, 20)",True,True,,
+bollinger_position,mean_reversion,(CLOSE - LOWER_BAND) / (UPPER_BAND - LOWER_BAND),True,True,,k=2.0 on a 20-day SMA (A.3 does not state the band width).
+keltner_position,mean_reversion,(CLOSE - LOWER_CHANNEL) / (UPPER_CHANNEL - LOWER_CHANNEL),True,True,,EMA(20) centre with 2x ATR(10) bands; A.3 specifies neither.
+ma_reversion,mean_reversion,"(SMA(CLOSE, 20) - CLOSE)",True,False,mean_reversion,
+ema_reversion,mean_reversion,"(EMA(CLOSE, 20) - CLOSE)",True,False,,
+distance_from_high,mean_reversion,"(MAX(HIGH, 20) - CLOSE)",True,False,,
+distance_from_low,mean_reversion,"(CLOSE - MIN(LOW, 20))",True,False,,
+rsi_reversion,mean_reversion,(100 - RSI),True,True,,
+percent_b,mean_reversion,((CLOSE - LOWER_BAND) / (UPPER_BAND - LOWER_BAND)) * 100,True,True,bollinger_position,"bollinger_position times 100 -- an identical ranking, listed twice by A.3."
+std_dev,volatility,"STD(CLOSE, 20)",True,False,,Dollar standard deviation; higher-priced stocks rank higher mechanically.
+atr,volatility,ATR(14),True,False,,
+bollinger_width,volatility,"(UPPER_BAND - LOWER_BAND) / SMA(CLOSE, 20)",True,True,,
+historical_volatility,volatility,"STD(RETURNS, 20) * SQRT(252)",True,True,,
+volatility_ratio,volatility,"STD(CLOSE, 10) / STD(CLOSE, 50)",True,True,,
+chaikin_volatility,volatility,"(EMA(HIGH - LOW, 10) / DELAY(EMA(HIGH - LOW, 10), 10)) - 1",True,True,,
+garman_klass,volatility,SQRT(0.5*LOG(HIGH/LOW)^2 - (2*LOG(2)-1)*LOG(CLOSE/OPEN)^2),True,True,,"A.3 gives no window, so this is a single-bar estimator and is correspondingly noisy; convention averages the variance over ~20 days first."
+parkinson,volatility,"SQRT((1/(4*N*LOG(2))) * SUM(LOG(HIGH/LOW)^2, 20))",True,True,,
+yang_zhang,volatility,"SQRT(VAR(LOG(CLOSE/OPEN)) + 0.5*VAR(LOG(HIGH/OPEN)-LOG(LOW/OPEN)) + 0.25*VAR(LOG(CLOSE/DELAY(OPEN,1))))",True,True,,"Transcribed as written; this is NOT the canonical Yang-Zhang estimator (no k-weighting, no Rogers-Satchell term). VAR window set to 20 days."
+ulcer_index,volatility,"SQRT(MEAN(DRAWDOWN^2, 14))",True,True,,
+price_to_earnings,fundamental,(CLOSE / EPS),True,True,,"TTM diluted EPS, known from its SEC filing date. Undefined/negative for loss-makers, which is why earnings_yield is the more usable form."
+price_to_book,fundamental,(CLOSE / BOOK_VALUE),True,True,,Uses book value PER SHARE: A.3's CLOSE/BOOK_VALUE mixes a per-share price with a company-level total and is not a P/B ratio as written.
+dividend_yield,fundamental,(DIVIDENDS / CLOSE),True,True,,TTM declared dividends per share.
+earnings_yield,fundamental,(EPS / CLOSE),True,True,,"Reciprocal of price_to_earnings, but better behaved: it stays finite and correctly ordered through zero earnings."
+sales_to_price,fundamental,(SALES / CLOSE),True,True,,Revenue per share over price (see price_to_book note on units).
+cash_flow_yield,fundamental,(OPERATING_CASH_FLOW / CLOSE),True,True,,Operating cash flow per share over price.
+trading_volume,liquidity,VOLUME,True,False,,
+avg_trading_volume,liquidity,"MEAN(VOLUME, 20)",True,False,,
+vroc,liquidity,"(VOLUME - DELAY(VOLUME, 14)) / DELAY(VOLUME, 14)",True,True,,
+obv,liquidity,"SUM(VOLUME * SIGN(CLOSE - DELAY(CLOSE, 1)))",True,False,,"Unbounded cumulative sum with no window, exactly as A.3 writes it; its level depends on how long the name has been listed."
+liquidity_ratio,liquidity,VOLUME / MARKET_CAP,True,True,,
+turnover_rate,liquidity,VOLUME / SHARES_OUTSTANDING,True,True,,
+amihud_illiquidity,liquidity,ABS(RETURN) / VOLUME,True,False,,A.3 divides by share volume; Amihud's own measure uses dollar volume.
+high_low_spread,liquidity,(HIGH - LOW) / CLOSE,True,True,,
+dollar_volume,liquidity,VOLUME * CLOSE,True,False,,A near-pure size proxy: ranks megacaps top every day.
+debt_to_equity_liq,liquidity,(TOTAL_DEBT / TOTAL_EQUITY),True,True,debt_to_equity,A.3 lists debt-to-equity under both Liquidity and Quality.
+return_on_equity,liquidity,(NET_INCOME / EQUITY),True,True,,
+return_on_assets,liquidity,(NET_INCOME / TOTAL_ASSETS),True,True,,
+gross_profit_margin_liq,liquidity,(GROSS_PROFIT / REVENUE),True,True,gross_profit_margin,Repeated verbatim in the Quality block.
+price_to_sales,liquidity,(CLOSE / SALES),True,True,,
+price_to_cash_flow,liquidity,(CLOSE / OPERATING_CASH_FLOW),True,True,,
+book_to_market,liquidity,(BOOK_VALUE / CLOSE),True,True,,
+ev_to_ebitda,liquidity,(ENTERPRISE_VALUE / EBITDA),True,True,,
+bid_ask_spread,liquidity,(ASK_PRICE - BID_PRICE) / MID_PRICE,False,True,,"Needs quote-level (NBBO) data. Daily OHLCV cannot supply it, and no free intraday quote source is reachable here, so it is excluded rather than approximated by a high-low proxy that would double-count the high_low_spread factor already in this category."
+gross_profit_margin,quality,(GROSS_PROFIT / REVENUE),True,True,,
+operating_profit_margin,quality,(OPERATING_INCOME / REVENUE),True,True,,
+net_profit_margin,quality,(NET_INCOME / REVENUE),True,True,,
+earnings_stability,quality,"STD(EPS, 5) / MEAN(EPS, 5)",True,True,,"Window read as five reporting periods (315 trading days), not five days: five daily bars of a quarterly TTM series have zero variance."
+debt_to_equity,quality,(TOTAL_DEBT / TOTAL_EQUITY),True,True,,
+interest_coverage,quality,(EBIT / INTEREST_EXPENSE),True,True,,"EBIT proxied by operating income. Interest expense is untagged by many filers, so coverage is thin."
+cash_conversion_cycle,quality,(DIO + DSO - DPO),True,True,,"DIO=365*inventory/COGS, DSO=365*receivables/revenue, DPO=365*payables/COGS. Meaningless for financials, which carry no inventory."
+asset_turnover,quality,(REVENUE / TOTAL_ASSETS),True,True,,
+earnings_growth,growth,"(EPS / DELAY(EPS, 1) - 1)",True,True,,"DELAY(X,1) read as one year (252 trading days) of the TTM series."
+revenue_growth,growth,"(REVENUE / DELAY(REVENUE, 1) - 1)",True,True,,"DELAY(X,1) read as one year (252 trading days) of the TTM series."
+ebitda_growth,growth,"(EBITDA / DELAY(EBITDA, 1) - 1)",True,True,,"DELAY(X,1) read as one year (252 trading days) of the TTM series."
+cash_flow_growth,growth,"(CASH_FLOW / DELAY(CASH_FLOW, 1) - 1)",True,True,,"DELAY(X,1) read as one year (252 trading days) of the TTM series."
+dividends_growth,growth,"(DIVIDENDS / DELAY(DIVIDENDS, 1) - 1)",True,True,,"DELAY(X,1) read as one year (252 trading days) of the TTM series."
+book_value_growth,growth,"(BOOK_VALUE / DELAY(BOOK_VALUE, 1) - 1)",True,True,,"DELAY(X,1) read as one year (252 trading days) of the TTM series."
+sales_growth,growth,"(SALES / DELAY(SALES, 1) - 1)",True,True,revenue_growth,A.3 lists SALES and REVENUE growth separately; both resolve to the same XBRL revenue concept.
+asset_growth,growth,"(ASSETS / DELAY(ASSETS, 1) - 1)",True,True,,"DELAY(X,1) read as one year (252 trading days) of the TTM series."
+equity_growth,growth,"(EQUITY / DELAY(EQUITY, 1) - 1)",True,True,,"DELAY(X,1) read as one year (252 trading days) of the TTM series."
+retained_earnings_growth,growth,"(RETAINED_EARNINGS / DELAY(RETAINED_EARNINGS, 1) - 1)",True,True,,"DELAY(X,1) read as one year (252 trading days) of the TTM series."
+moving_average,technical,"SMA(CLOSE, 20)",True,False,,A price level. Cross-sectionally this ranks stocks by nominal share price and essentially nothing else.
+exp_moving_average,technical,"EMA(CLOSE, 20)",True,False,,See moving_average.
+rsi,technical,RSI(14),True,True,,
+macd,technical,"(EMA(CLOSE, 12) - EMA(CLOSE, 26))",True,False,,
+bollinger_bands,technical,UPPER_BAND - LOWER_BAND,True,False,,"Raw band span in dollars (= 4 * STD(CLOSE,20)); monotone in std_dev."
+stochastic_oscillator,technical,"((CLOSE - MIN(LOW,14)) / (MAX(HIGH,14) - MIN(LOW,14))) * 100",True,True,,
+atr_technical,technical,ATR(14),True,False,atr,A.3 lists ATR(14) under both Volatility and Technical.
+cci,technical,"(TYPICAL_PRICE - SMA(TYPICAL_PRICE, 20)) / (0.015 * MEAN_DEV(TYPICAL_PRICE, 20))",True,True,,
+williams_r,technical,"((MAX(HIGH,14) - CLOSE) / (MAX(HIGH,14) - MIN(LOW,14))) * -100",True,True,,
+interest_rate,macro,"INTEREST_RATE - DELAY(INTEREST_RATE, n)",True,True,,"10-year Treasury yield (^TNX), n=21 trading days. Cross-sectionally constant: contributes nothing to a stock ranking."
+short_rate,macro,"INTEREST_RATE - DELAY(INTEREST_RATE, n)",True,True,,13-week T-bill (^IRX). Stands in for A.3's separate macro entries that require FRED. Cross-sectionally constant.
+implied_vol_change,macro,"CCI - DELAY(CCI, n)  [proxy]",True,True,,"VIX change, used as the reachable stand-in for A.3's Consumer Confidence Index. Cross-sectionally constant."
+dollar_index_change,macro,"FX_RESERVES - DELAY(FX_RESERVES, n)  [proxy]",True,True,,"Dollar index (DXY) change, proxying A.3's FX reserves. Cross-sectionally constant."
+oil_price_change,macro,"IPI - DELAY(IPI, n)  [proxy]",True,True,,"Crude oil, proxying industrial production. Cross-sectionally constant."
+gold_price_change,macro,"CPI - DELAY(CPI, n)  [proxy]",True,True,,"Gold, proxying inflation. Cross-sectionally constant."
+gdp_growth,macro,"GDP - DELAY(GDP, n)",False,True,,FRED GDPC1 unreachable from this environment. Would in any case be cross-sectionally constant.
+unemployment_rate,macro,"UNEMPLOYMENT_RATE - DELAY(UNEMPLOYMENT_RATE, n)",False,True,,FRED UNRATE unreachable. Would in any case be cross-sectionally constant.
+retail_sales_growth,macro,"RETAIL_SALES - DELAY(RETAIL_SALES, n)",False,True,,FRED RSAFS unreachable. Would in any case be cross-sectionally constant.
+housing_starts_growth,macro,"HOUSING_STARTS - DELAY(HOUSING_STARTS, n)",False,True,,FRED HOUST unreachable. Would in any case be cross-sectionally constant.
