@@ -49,16 +49,61 @@ def _style_axes(ax) -> None:
     ax.tick_params(colors=INK_MUTED, labelsize=9)
 
 
-def _direct_label(ax, x, y, text, color) -> None:
-    """Label at the end of a line: text in ink, a colored dot carrying identity.
+def _label_gap_in_data_units(ax, fontsize: float) -> float:
+    """Minimum vertical spacing between stacked labels, in data units.
 
-    Three of the four palette slots sit below 3:1 contrast on this surface, so
-    the validator's relief rule applies -- identity must not rest on hue alone.
+    Derived from the rendered text height rather than a guessed fraction of the
+    axis range: a fixed fraction is either too tight on a tall axis or wasteful
+    on a short one, and getting it wrong is exactly how end-labels end up
+    sitting on top of each other.
     """
-    ax.plot([x], [y], marker="o", markersize=6, color=color, zorder=5,
-            markeredgecolor=SURFACE, markeredgewidth=1.5, clip_on=False)
-    ax.annotate(f"  {text}", (x, y), color=INK, fontsize=9,
-                va="center", ha="left", annotation_clip=False)
+    fig = ax.get_figure()
+    fig.canvas.draw()
+    low, high = ax.get_ylim()
+    pixel_height = ax.get_window_extent().height
+    if pixel_height <= 0:
+        return (high - low) * 0.06
+    line_pixels = fontsize * fig.dpi / 72.0 * 1.45  # glyph height + leading
+    return line_pixels * (high - low) / pixel_height
+
+
+def _place_end_labels(ax, entries, fontsize: float = 9.0) -> None:
+    """Draw line-end labels, nudged apart so they never overlap.
+
+    ``entries`` is a list of ``(x, y, text, color)``. The dot stays anchored to
+    the line's true end value; only the text slides, with a leader line drawn
+    when it has moved far enough to need one. Text is in ink and the colored dot
+    carries identity -- three of the four palette slots sit below 3:1 contrast on
+    this surface, so the validator's relief rule applies and nothing may rest on
+    hue alone.
+    """
+    if not entries:
+        return
+    min_gap = _label_gap_in_data_units(ax, fontsize)
+
+    ordered = sorted(entries, key=lambda e: e[1])
+    placed = [list(e) + [e[1]] for e in ordered]  # trailing slot = label y
+
+    # One upward pass, then one downward pass, keeps the group centred rather
+    # than pushing everything off the top of the axes.
+    for i in range(1, len(placed)):
+        if placed[i][4] - placed[i - 1][4] < min_gap:
+            placed[i][4] = placed[i - 1][4] + min_gap
+    for i in range(len(placed) - 2, -1, -1):
+        if placed[i + 1][4] - placed[i][4] < min_gap:
+            placed[i][4] = placed[i + 1][4] - min_gap
+
+    for x, y, text, color, label_y in placed:
+        ax.plot([x], [y], marker="o", markersize=6, color=color, zorder=5,
+                markeredgecolor=SURFACE, markeredgewidth=1.5, clip_on=False)
+        if abs(label_y - y) > min_gap * 0.25:
+            ax.annotate(
+                "", xy=(x, y), xytext=(x, label_y), annotation_clip=False,
+                arrowprops=dict(arrowstyle="-", color=GRID, linewidth=1.0,
+                                shrinkA=0, shrinkB=3),
+            )
+        ax.annotate(f"  {text}", (x, label_y), color=INK, fontsize=fontsize,
+                    va="center", ha="left", annotation_clip=False)
 
 
 def plot_equity_curves(returns: pd.DataFrame, bench: pd.DataFrame, out: Path) -> None:
@@ -73,31 +118,40 @@ def plot_equity_curves(returns: pd.DataFrame, bench: pd.DataFrame, out: Path) ->
     fig, ax = plt.subplots(figsize=(12, 6.5), facecolor=SURFACE)
     _style_axes(ax)
 
+    end_labels = []
+
     # Benchmarks first, behind, in neutral grey.
     for i, name in enumerate(bench_wanted):
         equity = (1 + bench[name].fillna(0)).cumprod()
         ax.plot(equity.index, equity.values, color=BENCH_GREY, linewidth=1.6,
                 linestyle="--" if i else "-", zorder=2)
-        _direct_label(ax, equity.index[-1], equity.iloc[-1],
-                      LABELS.get(name, name).replace("Benchmark: ", ""), BENCH_GREY)
+        end_labels.append((equity.index[-1], equity.iloc[-1],
+                           LABELS.get(name, name).replace("Benchmark: ", ""), BENCH_GREY))
 
     for slot, name in enumerate(wanted):
         equity = (1 + returns[name].fillna(0)).cumprod()
         ax.plot(equity.index, equity.values, color=SERIES[slot], linewidth=2.0, zorder=3)
-        _direct_label(ax, equity.index[-1], equity.iloc[-1],
-                      LABELS.get(name, name).replace("Baseline: ", "").replace(" (CSA + RPA)", ""),
-                      SERIES[slot])
+        end_labels.append((
+            equity.index[-1], equity.iloc[-1],
+            LABELS.get(name, name).replace("Baseline: ", "").replace(" (CSA + RPA)", ""),
+            SERIES[slot],
+        ))
 
     ax.axhline(1.0, color=GRID, linewidth=1.0, zorder=1)
+    _place_end_labels(ax, end_labels)
     ax.set_ylabel("growth of 1 unit (net of costs)", color=INK_MUTED, fontsize=10)
     ax.set_title("Out-of-sample equity curves, net of transaction costs",
-                 color=INK, fontsize=13, loc="left", pad=14)
+                 color=INK, fontsize=13, loc="left", pad=38)
     handles = [plt.Line2D([], [], color=SERIES[i], linewidth=2.0) for i in range(len(wanted))]
     handles += [plt.Line2D([], [], color=BENCH_GREY, linewidth=1.6,
                            linestyle="--" if i else "-") for i in range(len(bench_wanted))]
     labels = [LABELS.get(n, n) for n in wanted] + [LABELS.get(n, n) for n in bench_wanted]
-    ax.legend(handles, labels, loc="upper left", frameon=False,
-              fontsize=9, labelcolor=INK_MUTED)
+    # Legend above the plot area rather than inside it: an in-axes legend
+    # collides with whichever series happens to run into that corner, and which
+    # corner is safe changes with the data.
+    ax.legend(handles, labels, loc="lower left", bbox_to_anchor=(0, 1.01, 1, 0.12),
+              mode="expand", ncol=3, frameon=False, fontsize=9,
+              labelcolor=INK_MUTED, borderaxespad=0)
     fig.subplots_adjust(right=0.78)
     fig.savefig(out, dpi=120, facecolor=SURFACE, bbox_inches="tight")
     plt.close(fig)
@@ -126,8 +180,10 @@ def plot_fold_returns(folds: pd.DataFrame, out: Path) -> None:
     ax.set_xticklabels(sub["test_window"], rotation=20, ha="right", fontsize=8)
     ax.set_ylabel("cumulative return over the fold, net (%)", color=INK_MUTED, fontsize=10)
     ax.set_title("Per-fold out-of-sample return: the dispersion a single test window hides",
-                 color=INK, fontsize=13, loc="left", pad=14)
-    ax.legend(loc="best", frameon=False, fontsize=9, labelcolor=INK_MUTED)
+                 color=INK, fontsize=13, loc="left", pad=32)
+    ax.legend(loc="lower left", bbox_to_anchor=(0, 1.01, 1, 0.1), mode="expand",
+              ncol=2, frameon=False, fontsize=9, labelcolor=INK_MUTED,
+              borderaxespad=0)
     fig.savefig(out, dpi=120, facecolor=SURFACE, bbox_inches="tight")
     plt.close(fig)
 
