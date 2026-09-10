@@ -130,6 +130,14 @@ class CSAConfig:
     """Forward-return horizon N (trading days) for the IC."""
 
     method: Literal["spearman", "pearson"] = "spearman"
+
+    confidence_metric: Literal["abs_mean_ic", "mean_ic", "ic_ir"] = "abs_mean_ic"
+    """How E[IC] is turned into a score. ``abs_mean_ic`` scores on magnitude,
+    since a factor with IC -0.05 is as useful as one with +0.05 (trade it the
+    other way) -- and the paper's own Table 3 reports negative ICs while calling
+    a combination IC of -0.0587 "quite high". ``mean_ic`` is the signed reading;
+    ``ic_ir`` scores on the IC t-statistic, rewarding consistency over size."""
+
     window: Literal["rolling", "expanding"] = "rolling"
     window_days: int = 252
     min_periods: int = 60

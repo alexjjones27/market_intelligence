@@ -63,8 +63,12 @@ UNAVAILABLE_MACRO: dict[str, str] = {
 }
 
 BENCHMARKS: dict[str, str] = {
-    "sp500_cap_weight": "^GSPC",
+    # SPY rather than ^GSPC for the cap-weight line: ^GSPC is a price index and
+    # excludes dividends, which understates it by roughly 1.8% a year and would
+    # flatter any strategy compared against it. ^GSPC is kept for reference.
+    "sp500_cap_weight": "SPY",
     "sp500_equal_weight": "RSP",
+    "sp500_price_index": "^GSPC",
 }
 
 

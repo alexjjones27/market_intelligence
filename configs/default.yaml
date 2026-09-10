@@ -50,6 +50,7 @@ alphas:
 csa:
   ic_horizon: 5
   method: "spearman"
+  confidence_metric: "abs_mean_ic"
   window: "rolling"
   window_days: 252
   min_periods: 60
