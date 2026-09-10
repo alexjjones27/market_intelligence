@@ -25,7 +25,9 @@ from alpha_lab.agents.factor_stats import compute_factor_stats
 from alpha_lab.alphas.library import registry
 from alpha_lab.alphas.registry import compute_alphas
 from alpha_lab.backtest import baselines
-from alpha_lab.backtest.engine import VARIANTS, run_walk_forward, stitch_returns
+from alpha_lab.backtest.engine import (
+    VARIANTS, run_walk_forward, stitch_costs, stitch_returns, stitch_turnover,
+)
 from alpha_lab.backtest.metrics import summarise
 from alpha_lab.backtest.statistics import (
     block_bootstrap, factor_attribution, hac_excess_test, hac_mean_test, sector_portfolios,
@@ -121,6 +123,8 @@ def main() -> None:
     variants = list(VARIANTS) + ["single_alpha", "gbm", "no_agents_all_alphas"]
     stitched_net = {v: stitch_returns(runs, v, net=True) for v in variants}
     stitched_gross = {v: stitch_returns(runs, v, net=False) for v in variants}
+    stitched_turnover = {v: stitch_turnover(runs, v) for v in variants}
+    stitched_costs = {v: stitch_costs(runs, v) for v in variants}
 
     oos_index = stitched_net["full"].index
     bench = baselines.benchmark_returns(panel).reindex(oos_index)
@@ -130,7 +134,10 @@ def main() -> None:
     for name, series in stitched_net.items():
         if series.empty:
             continue
-        s = summarise(series, label=name, risk_free=cfg.evaluation.risk_free_rate,
+        s = summarise(series, label=name,
+                      turnover=stitched_turnover.get(name),
+                      costs=stitched_costs.get(name),
+                      risk_free=cfg.evaluation.risk_free_rate,
                       trading_days=cfg.evaluation.trading_days)
         g = summarise(stitched_gross[name], label=name + "_gross",
                       risk_free=cfg.evaluation.risk_free_rate,

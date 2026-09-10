@@ -257,14 +257,15 @@ def run_walk_forward(
     return runs
 
 
-def stitch_returns(runs: list[FoldRun], variant: str, net: bool = True) -> pd.Series:
+def _stitch(runs: list[FoldRun], variant: str, attribute: str) -> pd.Series:
     """Concatenate one variant's out-of-sample test windows into one series.
 
-    Folds do not overlap in test time, so this is a genuine out-of-sample track
-    record rather than a spliced-together in-sample one.
+    Folds do not overlap in test time (asserted in the walk-forward tests), so
+    this is a genuine out-of-sample track record rather than a spliced-together
+    in-sample one.
     """
     pieces = [
-        (r.result.net_returns if net else r.result.gross_returns)
+        getattr(r.result, attribute)
         for r in runs
         if r.variant == variant and r.result is not None
     ]
@@ -272,3 +273,15 @@ def stitch_returns(runs: list[FoldRun], variant: str, net: bool = True) -> pd.Se
         return pd.Series(dtype=float)
     joined = pd.concat(pieces).sort_index()
     return joined[~joined.index.duplicated(keep="first")]
+
+
+def stitch_returns(runs: list[FoldRun], variant: str, net: bool = True) -> pd.Series:
+    return _stitch(runs, variant, "net_returns" if net else "gross_returns")
+
+
+def stitch_turnover(runs: list[FoldRun], variant: str) -> pd.Series:
+    return _stitch(runs, variant, "turnover")
+
+
+def stitch_costs(runs: list[FoldRun], variant: str) -> pd.Series:
+    return _stitch(runs, variant, "costs")
