@@ -26,6 +26,44 @@ from alpha_lab.reporting.report import (
 REPORTS = Path("reports")
 
 
+# The paper's Table 6, SP500 rows, as printed. Our rolling folds land on exactly
+# these three test windows (folds 1, 3 and 5), so the comparison is direct
+# rather than approximate.
+PAPER_TABLE6_SP500 = {
+    "2021-01-01..2021-06-30": {"ann": 0.9361, "cum": 0.3519, "dd": -0.0789,
+                               "bench_ann": 0.2967, "bench_cum": 0.1259, "bench_dd": -0.0423},
+    "2022-01-01..2022-06-30": {"ann": 0.0277, "cum": 0.0125, "dd": -0.2055,
+                               "bench_ann": -0.4422, "bench_cum": -0.2339, "bench_dd": -0.2351},
+    "2023-01-01..2023-06-30": {"ann": 1.1824, "cum": 0.4278, "dd": -0.1152,
+                               "bench_ann": 0.3522, "bench_cum": 0.1476, "bench_dd": -0.0775},
+}
+
+
+def paper_comparison_table(folds: pd.DataFrame) -> str:
+    """Side-by-side against the paper's own reported SP500 numbers."""
+    sub = folds[folds["variant"] == "full"].dropna(subset=["cum_return_net"])
+    rows = ["| Test window | Paper: cum. return | Ours: cum. (net) | Ours: cum. (gross) | "
+            "Paper: max DD | Ours: max DD |",
+            "|---|---|---|---|---|---|"]
+    matched = 0
+    for window, paper in PAPER_TABLE6_SP500.items():
+        match = sub[sub["test_window"] == window]
+        if match.empty:
+            rows.append(f"| {window} | {_pct(paper['cum'])} | _not run_ | _not run_ | "
+                        f"{_pct(paper['dd'])} | - |")
+            continue
+        matched += 1
+        r = match.iloc[0]
+        rows.append(
+            f"| {window} | {_pct(paper['cum'])} | {_pct(r['cum_return_net'])} | "
+            f"{_pct(r['cum_return_gross'])} | {_pct(paper['dd'])} | {_pct(r['max_dd_net'])} |"
+        )
+    if matched == 0:
+        return "_no folds line up with the paper's Table 6 windows_"
+    return "\n".join(rows)
+
+
+
 # Validated categorical palette (see the dataviz reference palette). Only the
 # first four slots are used; benchmarks are deliberately neutral grey rather
 # than a fifth hue, because they are reference lines, not peer series.
@@ -311,6 +349,19 @@ def main() -> None:
         f"Sharpe ranging {sharpe_spread}. Dispersion this wide across folds is the "
         f"reason a single test window is not evidence.\n")
 
+    add("## Direct comparison with the paper's reported S&P 500 results\n")
+    add("The paper's Table 6 reports three SP500 test windows. Our rolling folds "
+        "land on exactly those windows, so this is a like-for-like comparison of "
+        "the same strategy design on the same index over the same dates, with the "
+        "differences in universe construction, agent operationalisation and costs "
+        "set out in [ALPHA_LAB.md](../ALPHA_LAB.md#deliberate-deviations-from-the-paper).\n")
+    add(paper_comparison_table(folds))
+    add("")
+    add("The paper's annualised figures in Table 6 are worth reading carefully on "
+        "their own terms: a 59.03% half-year is reported as a 192.27% annual "
+        "return, where compounding gives 153%. Cumulative return is the "
+        "unambiguous column, so that is what is compared here.\n")
+
     add("## Ablation: what do the two agents contribute?\n")
     add("The paper's Tables 7 and 8 report that removing either agent degrades "
         "performance, with the confidence agent mattering more.\n")
@@ -371,7 +422,7 @@ def main() -> None:
         add(f"Best ratio here is **{best['w_confidence']:.1f}/{best['w_risk']:.1f}** "
             f"(net Sharpe {_num(best['sharpe'])}), against the paper's 0.6/0.4. "
             f"The spread across the whole ladder is "
-            f"{_num(sweep['sharpe'].min())} to {_num(sweep['sharpe'].max())} — "
+            f"{_num(sweep['sharpe'].min())} to {_num(sweep['sharpe'].max())}. "
             f"worth weighing against the possibility that picking the best cell of a "
             f"seven-row sweep is itself a selection effect.\n")
     else:
