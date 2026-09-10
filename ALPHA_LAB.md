@@ -1,4 +1,4 @@
-# alpha_lab — replicating "Automate Strategy Finding with LLM in Quant Investment"
+# alpha_lab: replicating "Automate Strategy Finding with LLM in Quant Investment"
 
 A from-scratch, leakage-audited backtest of the three-stage framework in
 Kou et al., *Automate Strategy Finding with LLM in Quant Investment*
@@ -10,10 +10,8 @@ headline 53.17% cumulative return. Where the paper is silent, ambiguous, or
 (in a few places) internally inconsistent, this repo says so in the code and in
 the results rather than picking whichever reading produces a better number.
 
-> **Status: Stage 1 complete and verified.** The Seed Alpha Factory, the data
-> layer, and the leakage test suite are built and checked. Stages 2 (CSA/RPA
-> agents) and 3 (MLP weight optimiser), plus the walk-forward engine and
-> reporting, are scaffolded but not yet implemented.
+> **Status: all three stages built, walk-forward backtest run.** Results and the
+> honest assessment are in [reports/RESULTS.md](reports/RESULTS.md).
 
 ---
 
@@ -33,12 +31,27 @@ src/alpha_lab/
     operators.py        # DELAY, SMA, EMA, RSI, ATR, ADX, ... (42 operators)
     library.py          # the 92 Appendix A.3 alphas, transcribed verbatim
     registry.py         # compute engine + per-alpha diagnostics
-  agents/ models/ portfolio/ backtest/ reporting/   # Stages 2-3 (scaffolded)
+  agents/
+    factor_stats.py     # IC and long-short spread panels, with the observability lag
+    confidence.py       # Stage 2: Confidence Score Agent (rolling out-of-sample IC)
+    risk.py             # Stage 2: Risk Preference Agent (vol / drawdown / IC stability)
+    selection.py        # Algorithm 1: category-based selection
+  models/mlp.py         # Stage 3: weight optimiser (input -> 10 ReLU -> 1)
+  portfolio/construction.py  # Appendix A.8 top-k/drop-n, execution lag, costs
+  backtest/
+    walkforward.py      # Table 5 fold geometry, rolled forward
+    engine.py           # per-fold orchestration, ablations, baselines
+    metrics.py          # annualised performance metrics
+    statistics.py       # HAC tests, block bootstrap, sector/beta attribution
+    baselines.py        # benchmarks, best-single-alpha, gradient boosting
+  reporting/report.py   # tables for the results write-up
 configs/default.yaml    # k, n, wc/wr, IC horizon, dates, costs
 scripts/
   build_universe.py     # fetch + cache membership snapshots
   build_panel.py        # fetch + cache the full market panel
-  stage1_sanity_check.py# verification report and plots
+  stage1_sanity_check.py# Stage 1 verification report and plots
+  run_backtest.py       # full walk-forward: pipeline, ablations, baselines, stats
+  generate_report.py    # builds reports/RESULTS.md from the backtest artefacts
 tests/alphalab/         # operator, leakage, and split-basis tests
 reports/                # generated output
 ```
@@ -49,6 +62,8 @@ Run order:
 python -m venv .venv && .venv/bin/pip install -r requirements-alpha-lab.txt
 .venv/bin/python scripts/build_panel.py           # ~15 min, cached thereafter
 .venv/bin/python scripts/stage1_sanity_check.py   # writes reports/stage1_*
+.venv/bin/python scripts/run_backtest.py          # ~2h, writes reports/results_*
+.venv/bin/python scripts/generate_report.py       # writes reports/RESULTS.md
 PYTHONPATH=src .venv/bin/python -m pytest tests/alphalab -q
 ```
 
@@ -62,10 +77,10 @@ costs and the date ranges. Core logic never hard-codes them.
 
 | Layer | Source | Point-in-time? |
 |---|---|---|
-| Index membership | Wikipedia **dated revisions** of *List of S&P 500 companies* | Yes — the page as it stood on each snapshot date |
+| Index membership | Wikipedia **dated revisions** of *List of S&P 500 companies* | Yes (the page as it stood on each snapshot date) |
 | Daily OHLCV | Yahoo Finance chart endpoint | Yes |
 | Splits | Yahoo split events | Yes |
-| Fundamentals | SEC EDGAR XBRL `companyfacts` | Yes — keyed on `filed`, never on fiscal period end |
+| Fundamentals | SEC EDGAR XBRL `companyfacts` | Yes, keyed on `filed`, never on fiscal period end |
 | Macro | Yahoo proxies (^TNX, ^IRX, ^VIX, DXY, oil, gold) | Yes |
 | Benchmarks | ^GSPC (cap-weight), RSP (equal-weight) | Yes |
 
@@ -73,14 +88,14 @@ costs and the date ranges. Core logic never hard-codes them.
 
 Membership is reconstructed from **27 quarterly Wikipedia revisions**, which
 yields **655 distinct tickers** that were S&P 500 members at some point between
-2018 and 2024 — versus the 503 in the index today. The 152 names that left are
+2018 and 2024, versus the 503 in the index today. The 152 names that left are
 exactly the ones a naive "download today's constituents" study deletes.
 
 The residual problem is that **Yahoo purges price history for delisted
 symbols**. 110 of those 655 tickers (16.8%) return nothing, which is a real
 hole and is quantified per snapshot in `reports/stage1_sanity_check.md` rather
 than assumed away. The direction of the resulting bias is genuinely ambiguous:
-acquisitions (ANSS, DFS, CTLT, ATVI — mostly at a premium) remove *winners*,
+acquisitions (ANSS, DFS, CTLT, ATVI, mostly at a premium) remove *winners*,
 while failures (FRC, SIVB) remove *losers*.
 
 ### Fundamentals cannot be read early
@@ -88,7 +103,7 @@ while failures (FRC, SIVB) remove *losers*.
 Every XBRL fact carries both the period it describes and the date it was filed.
 `fundamentals.py` keys exclusively on `filed`. Apple's FY2023 diluted EPS of
 $6.13 enters the panel on **2023-11-03**, the 10-K filing date, and the panel
-holds the prior $6.11 until then — not on 2023-09-30, the fiscal period end,
+holds the prior $6.11 until then, not on 2023-09-30, the fiscal period end,
 which is what a period-end join would do and is worth several percent a year on
 any value or growth factor.
 
@@ -103,7 +118,7 @@ quarterly.
 
 Yahoo restates prices for splits retroactively; SEC does not restate filings.
 Divide a split-adjusted 2019 Apple price (~$50) by an as-filed FY2019 EPS
-($11.89) and you get a 24% earnings yield — a P/E of 4 for a stock that traded
+($11.89) and you get a 24% earnings yield: a P/E of 4 for a stock that traded
 near 17. `prices.load_split_factors` builds `cum(t)/cum(T_end)` per ticker and
 `fundamentals._apply_split_basis` applies it **at the filing date**: per-share
 amounts are scaled one way, share counts the other, and market cap comes out
@@ -111,11 +126,11 @@ invariant. That invariance is asserted in `tests/alphalab/test_split_basis.py`.
 
 ---
 
-## Stage 1 — the Seed Alpha Factory
+## Stage 1: the Seed Alpha Factory
 
 The paper's Stage 1 has an LLM read 11 papers and emit ~100 formulaic alphas.
 That step is unverifiable and is deliberately **not** replicated. Instead, the
-Appendix A.3 table — the paper's own published output — is hard-coded as the
+Appendix A.3 table (the paper's own published output) is hard-coded as the
 ground-truth factory: **92 alphas across 9 categories**, each carrying its A.3
 short code verbatim in the source for line-by-line audit.
 
@@ -139,7 +154,7 @@ Two invariants are enforced by the test suite, not just by inspection:
    matters: comparing only cells where both runs produced a value skips exactly
    the boundary window where a forward-looking operator reveals itself. A
    companion test injects a deliberate `shift(-5)` alpha and asserts the check
-   catches it — a leakage test that cannot fail is worse than none.
+   catches it. A leakage test that cannot fail is worse than none.
 2. **No cross-contamination.** Operators act column-wise; normalisation is
    same-day cross-sectional only. A separate test rewrites all future rows and
    asserts no past normalised value moves.
@@ -159,20 +174,20 @@ They matter because they bound what Stages 2–3 can possibly learn.
 `GDP − DELAY(GDP, n)` takes the same value for every stock on a given day. The
 paper's own portfolio rule (Appendix A.8) *ranks stocks against each other*, so
 a constant column changes no ranking, and its cross-sectional IC is not zero but
-**undefined** — the Spearman correlation of a constant vector is NaN. One of the
+**undefined**: the Spearman correlation of a constant vector is NaN. One of the
 paper's nine categories cannot contribute to the paper's own strategy. This
 would hold identically with a full FRED feed.
 
 **2. Roughly a quarter of the alphas are not scale-free.**
 22 of 92 formulas carry units. `SMA(CLOSE, 20)` and `EMA(CLOSE, 20)` correlate
-**+0.999** with log price across the cross-section — ranked against each other
+**+0.999** with log price across the cross-section. Ranked against each other
 they order stocks by nominal share price and essentially nothing else. `ATR(14)`
 reaches +0.94, `STD(CLOSE, 20)` +0.85. As cross-sectional stock-ranking signals
 these are largely price-level and size proxies.
 
 **3. Seven alphas are duplicates.**
 `ROC` and `Momentum Oscillator` are the *same expression*. `Bollinger Bands` and
-`Percent B` differ by a factor of 100 — an identical ranking. `MEAN` and `SMA`
+`Percent B` differ by a factor of 100, an identical ranking. `MEAN` and `SMA`
 are the same operator, making `Mean Reversion` and `MA Reversion` identical.
 `ATR(14)`, gross margin and debt-to-equity each appear in two categories. This
 directly undercuts Algorithm 1's category-diversification claim: picking the
@@ -180,7 +195,7 @@ best alpha from each of two categories can pick the same signal twice.
 
 **4. The paper's reported metrics are mutually inconsistent.**
 Table 4 reports Sharpe 0.287 alongside 53.17% cumulative return and 0.762%
-volatility — internally consistent only if that Sharpe is a *daily* figure
+volatility, internally consistent only if that Sharpe is a *daily* figure
 (≈4.5 annualised). But Table 7 reports Sharpe 1.94 for the same full model,
 Table 9 reports 11.39 "overall", and Table 10 reports 13.33. These cannot all be
 the same quantity. Table 7's text also cites "Sharpe Ratio of 1.73" against its
@@ -191,7 +206,7 @@ a sign flip described as a drop.
 **5. Costs are not modelled at all, at ~38% daily turnover.**
 Appendix A.8 states the k=13/n=5 configuration turns over ~38% of the portfolio
 daily. At 10bps round-trip that is roughly 0.076%/day, on the order of **19% a
-year** of drag — against a claimed 53% return. This repo reports every result
+year** of drag, against a claimed 53% return. This repo reports every result
 both gross and net.
 
 **6. The paper's own selection prompt looks contaminated.**
@@ -209,26 +224,102 @@ data available as of each scoring date.
 
 From `reports/stage1_sanity_check.md` (regenerate with the script):
 
-**Structural** — RSI within [0,100]; stochastic within [0,100]; Williams %R
+**Structural.** RSI within [0,100]; stochastic within [0,100]; Williams %R
 within [−100,0]; historical volatility non-negative; per-day z-scores have mean
 ≈0 and std 1.000; no infinities anywhere.
 
-**Behavioural, against price action a reader can check** —
+**Behavioural, against price action a reader can check:**
 
 | Check | Jan–Feb 2020 | 16–24 Mar 2020 |
 |---|---|---|
 | Universe-median annualised volatility | 17.7% | **98.9%** (5.6×) |
 | Universe-median RSI(14) | 55.6 | **31.1** |
-| Universe-median Bollinger position | — | **0.10** (pinned to lower band) |
+| Universe-median Bollinger position | n/a | **0.10** (pinned to lower band) |
 
 Worst universe-wide Ulcer Index falls on **2020-03-25**, the COVID bottom week.
 
-**Point-in-time fundamentals** — TTM EPS for AAPL, MSFT, JNJ and XOM changes
+**Point-in-time fundamentals.** TTM EPS for AAPL, MSFT, JNJ and XOM changes
 19–22 times over 2019–2024 with a **median gap of 90–91 days**, confirming the
 values step on filing dates rather than drifting daily or updating at period end.
 
 Plots: `reports/stage1_sanity_alphas.png` (alphas against AAPL price action) and
 `reports/stage1_scale_dependence.png` (price-level contamination by alpha).
+
+---
+
+## Stages 2 and 3 - how the underspecified parts were pinned down
+
+The paper defines its two agents only as `theta = E[IC(alpha | M(t))]` and
+`rho = f_risk(alpha, M(t))`. Neither is enough to implement, and this is the
+step most easily reverse-engineered into working, so both definitions are fixed
+up front and stated at the definition site.
+
+**Confidence Score Agent.** The mean rolling out-of-sample rank IC, scored on
+**magnitude**. An alpha with IC -0.05 is as useful as one at +0.05 (trade it the
+other way), and the paper itself reports negative ICs throughout Table 3 while
+calling a combination IC of -0.0587 "quite high", which only makes sense on
+magnitude. `confidence_metric` switches to the signed reading or to the IC
+t-statistic.
+
+**Risk Preference Agent.** Three penalties measured on the long-short quantile
+book the alpha itself implies: realised spread volatility, spread maximum
+drawdown, and the share of sub-windows whose mean IC agrees in sign with the
+window overall.
+
+**Both agents' outputs are percentile-ranked across alphas before combining.**
+This is what makes `wc*theta + wr*rho` mean anything: a raw mean IC lives around
+0.02 and a raw drawdown around 0.30, so a 0.6/0.4 blend of the raw quantities
+would be decided by units rather than by the weights. The cost, noted where it
+is applied, is that Algorithm 1's threshold X becomes a percentile rather than
+an absolute level.
+
+**Observability is enforced structurally, not by convention.** An IC computed at
+date `t` uses the return from `t` to `t+N`, so nobody can know it until `t+N`.
+An agent scoring on date `d` may read IC rows only through `d-N`; spread returns
+are realised, so those are readable through `d` itself.
+`observable_ic_window` and `observable_spread_window` own that arithmetic so no
+caller re-derives it, and the boundary is pinned by tests.
+
+**Stage 3** is the paper's architecture exactly: input sized to the selected
+alphas, one hidden layer of ten ReLU units, a linear output predicting the
+forward return, early stopping on a separate validation set. Training rows are
+trimmed by the forward-return horizon, because a row three days before the
+train/validation boundary carries a five-day target that reaches into
+validation. Feature and target standardisation are fitted on training rows
+alone. Restarts are run from several seeds and the median by validation loss is
+kept, so no result rests on one lucky initialisation.
+
+**Portfolio construction** is Appendix A.8's top-k/drop-n, plus the two things
+the paper does not model: a one-day execution lag (a signal from the close of
+`t` cannot trade at the close of `t`) and transaction costs. Both are
+configurable, and `execution_lag_days: 0` exists so the cost of the optimistic
+assumption can be measured rather than argued about.
+
+---
+
+## What is compared against what
+
+Beating the index during a period when the index rose is a weak claim. Every
+variant faces identical folds, identical costs and an identical portfolio rule:
+
+| Variant | What it isolates |
+|---|---|
+| Full pipeline | CSA + RPA + MLP, as specified |
+| No-CSA / No-RPA | The paper's Table 7/8 ablations |
+| MLP on all alphas | What the agent layer adds, if anything |
+| Best single alpha | Whether one formula beats the whole pipeline |
+| Gradient boosting | The paper's own XGBoost comparator |
+| Equal-weight universe | The universe and date range, with no signal at all |
+| SPY / RSP | Cap-weight and equal-weight S&P 500 total return |
+
+Significance is not left to eyeballing a Sharpe ratio. Daily strategy returns
+are autocorrelated, so mean-return tests use Newey-West (HAC) standard errors
+and the Sharpe confidence interval comes from a **block** bootstrap that
+resamples 21-day blocks. An apparent edge is then regressed against the market
+and against eleven equal-weight GICS sector portfolios: over the out-of-sample
+window Energy returned about +37% a year against +4% for Consumer Staples, so a
+concentrated 13-stock book can look like alpha while simply being a sector tilt.
+The intercept of that regression, with HAC errors, is what survives.
 
 ---
 
@@ -257,7 +348,7 @@ Yang-Zhang `VAR` window 20 days; macro `n=21` trading days.
 
 - **110 delisted tickers have no price history** (see above). This is the
   largest remaining threat to validity.
-- **`bid_ask_spread` cannot be computed** — it needs quote-level NBBO data.
+- **`bid_ask_spread` cannot be computed**: it needs quote-level NBBO data.
   Excluded rather than approximated by a high-low proxy that would double-count
   the `high_low_spread` factor already in the same category.
 - **Nine of ten A.3 macro factors need FRED**, which is unreachable from this
@@ -268,6 +359,6 @@ Yang-Zhang `VAR` window 20 days; macro `n=21` trading days.
   holds what the market had, not what the figure was later revised to.
 - **Wikipedia membership lags real index changes** by days to weeks, and
   quarterly snapshots miss an add-then-drop inside one quarter.
-- **Fundamental coverage varies by field** — 97% of stock-days for total assets,
+- **Fundamental coverage varies by field**: 97% of stock-days for total assets,
   57% for gross profit (financials do not report it). Per-field coverage is in
   `reports/stage1_alpha_diagnostics.csv`.

@@ -227,6 +227,16 @@ def plot_fold_returns(folds: pd.DataFrame, out: Path) -> None:
 
 
 
+
+def _verdict(ours: float, theirs: float, tolerance: float = 0.001) -> str:
+    """Three-way comparison. A near-tie is reported as one, not as a loss."""
+    if not (np.isfinite(ours) and np.isfinite(theirs)):
+        return "not comparable"
+    if abs(ours - theirs) <= tolerance:
+        return "level"
+    return "pipeline ahead" if ours > theirs else "pipeline behind"
+
+
 def read(name: str) -> pd.DataFrame:
     path = REPORTS / name
     return pd.read_csv(path) if path.exists() else pd.DataFrame()
@@ -427,6 +437,126 @@ def main() -> None:
             f"seven-row sweep is itself a selection effect.\n")
     else:
         add("_Sweep not run._\n")
+
+    # ------------------------------------------------------- honest assessment
+    add("## Does this hold up?\n")
+
+    beats_ew = full_net > ew
+    beats_cap = full_net > cap
+    beats_single = full_net > single
+    beats_gbm = full_net > gbm
+    beats_all_alphas = full_net > all_alphas
+    hac_significant = np.isfinite(hac_p) and hac_p < 0.05
+    excess_significant = np.isfinite(ex_p) and ex_p < 0.05
+    ci_spans_zero = np.isfinite(ci_low) and ci_low < 0 < ci_high
+    sector_alpha_significant = (
+        len(attrib_full) and np.isfinite(sector_t) and abs(sector_t) > 1.96
+    )
+    agents_help = full_net > max(no_csa, no_rpa)
+
+    add("### The short answer\n")
+    verdict = []
+    verdict.append(
+        f"Over {meta['n_folds']} out-of-sample folds the full pipeline returned "
+        f"**{_pct(full_net)}** net of costs against **{_pct(ew)}** for simply holding "
+        f"the same universe equal-weighted"
+        + (", so it **did** beat that benchmark." if beats_ew else
+           ", so it **did not** beat that benchmark.")
+    )
+    verdict.append(
+        "Its mean daily return is "
+        + ("**statistically distinguishable from zero** " if hac_significant
+           else "**not statistically distinguishable from zero** ")
+        + f"under a HAC-corrected test (t = {_num(hac_t)}, p = {_num(hac_p, 3)}), and the "
+        f"block-bootstrap interval for its Sharpe "
+        + ("spans zero" if ci_spans_zero else "excludes zero")
+        + f" at [{_num(ci_low)}, {_num(ci_high)}]."
+    )
+    verdict.append(
+        "Against an equal-weight hold of the same universe the excess return carries "
+        f"t = {_num(ex_t)} (p = {_num(ex_p, 3)}), which is "
+        + ("significant at the 5% level." if excess_significant
+           else "**not** significant at the 5% level.")
+    )
+    verdict.append(
+        "Once market beta and eleven sector portfolios are regressed out, the "
+        f"unexplained annual alpha is **{_pct(sector_alpha)}** (t = {_num(sector_t)}), "
+        + ("which does survive conventional significance."
+           if sector_alpha_significant else
+           "which does **not** survive conventional significance. On this evidence the "
+           "return is accounted for by market and sector exposure rather than by "
+           "factor selection.")
+    )
+    for line in verdict:
+        add("- " + line)
+    add("")
+
+    add("### Did the pipeline beat the simple things?\n")
+    add("| Comparison | Result |")
+    add("|---|---|")
+    for caption, other in [
+        ("equal-weight universe", ew),
+        ("cap-weight S&P 500", cap),
+        ("best single alpha", single),
+        ("gradient boosting on the same features", gbm),
+        ("MLP on all alphas, no agent layer", all_alphas),
+    ]:
+        add(f"| vs. {caption} | {_verdict(full_net, other)} "
+            f"({_pct(full_net)} vs {_pct(other)}) |")
+    add("")
+    if _verdict(full_net, single) == "pipeline behind":
+        add("The best-single-alpha row is the one that matters most. A three-stage "
+            "pipeline that cannot beat one formula run through the identical portfolio "
+            "rule is not earning its complexity on this data.\n")
+    if _verdict(full_net, all_alphas) == "pipeline behind":
+        add("The agent layer is also not paying for itself here: feeding every usable "
+            "alpha straight to the network did better than selecting with CSA and RPA "
+            "first.\n")
+    elif agents_help:
+        add("The ablations do point the same way as the paper's Table 7: removing "
+            "either agent hurt, so the selection layer is contributing something on "
+            "this data.\n")
+
+    add("### Where our numbers diverge from the paper's, and why\n")
+    add("The paper reports 53.17% on SSE50 for 2023 and 42.78% on SP500 for H1 2023. "
+        "We do not reproduce anything of that size. The differences are structural, "
+        "not a matter of tuning:\n")
+    add("1. **Transaction costs.** The paper models none, at its own stated ~38% daily "
+        f"turnover. Here that costs **{_pct(cost_drag)} a year**, taking cumulative "
+        f"return from {_pct(full_gross)} gross to {_pct(full_net)} net. This single "
+        "difference is worth more than most of the others combined.")
+    add("2. **Execution timing.** We execute a signal one session after the close it "
+        "was computed from. The paper is silent on this, and same-bar execution is "
+        "worth a great deal at daily rebalancing frequency.")
+    add("3. **Agent operationalisation.** The paper defines confidence and risk only "
+        "as `E[IC]` and `f_risk(...)`. We had to invent concrete definitions. Ours are "
+        "mechanical and can only see data available at the scoring date; the paper's "
+        "were produced by an LLM that, per Appendix A.7, was shown *test-period factor "
+        "performance* and whose training data covers the 2023 test window.")
+    add("4. **Universe.** Point-in-time S&P 500 rather than SSE50. A 50-stock "
+        "large-cap Chinese index in 2023 is a different opportunity set from ~450 US "
+        "large caps, and cross-sectional strategies are highly sensitive to breadth.")
+    add("5. **No multimodal inputs.** No audio, video, chart images or news sentiment. "
+        "This is a real difference from the paper's design, though the paper provides "
+        "no ablation isolating what those inputs contribute.")
+    add("6. **Survivorship.** Our universe is point-in-time, but 110 delisted tickers "
+        "have no price history. Whether the paper's SSE50 constituent set was "
+        "point-in-time is not stated.\n")
+
+    add("### What I would still not trust here\n")
+    add("- **The delisted-ticker hole.** 16.8% of ever-members cannot be priced. "
+        "Direction of bias is ambiguous (acquisitions remove winners, failures remove "
+        "losers) but the magnitude is not negligible.")
+    add("- **Sector labels are not point-in-time.** The attribution uses each ticker's "
+        "most recently known GICS sector for all history. Sector reclassifications are "
+        "rare but not zero.")
+    add("- **The weight sweep is a selection surface.** Reporting the best cell of a "
+        "seven-row ladder is itself a form of overfitting, which is exactly why the "
+        "whole ladder is printed rather than only the winner.")
+    add("- **One universe, one country, five and a half years.** Nothing here says "
+        "anything about whether the design works elsewhere.")
+    add("- **Alpha decay is not modelled.** Factors that worked in 2021 need not work "
+        "in 2024, and the walk-forward design measures that but does not correct for it.\n")
 
     add("## Which alphas the agents actually picked\n")
     add(selection_frequency(selections, "full"))
