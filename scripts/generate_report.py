@@ -10,6 +10,9 @@ import json
 import sys
 from pathlib import Path
 
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -21,6 +24,113 @@ from alpha_lab.reporting.report import (
 )
 
 REPORTS = Path("reports")
+
+
+# Validated categorical palette (see the dataviz reference palette). Only the
+# first four slots are used; benchmarks are deliberately neutral grey rather
+# than a fifth hue, because they are reference lines, not peer series.
+SERIES = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100"]
+INK = "#0b0b0b"
+INK_MUTED = "#52514e"
+GRID = "#e4e3df"
+SURFACE = "#fcfcfb"
+BENCH_GREY = "#8a8983"
+
+
+def _style_axes(ax) -> None:
+    """Recessive grid and axes: the data carries the ink, not the furniture."""
+    ax.set_facecolor(SURFACE)
+    ax.grid(True, color=GRID, linewidth=0.8, zorder=0)
+    ax.set_axisbelow(True)
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+    for side in ("left", "bottom"):
+        ax.spines[side].set_color(GRID)
+    ax.tick_params(colors=INK_MUTED, labelsize=9)
+
+
+def _direct_label(ax, x, y, text, color) -> None:
+    """Label at the end of a line: text in ink, a colored dot carrying identity.
+
+    Three of the four palette slots sit below 3:1 contrast on this surface, so
+    the validator's relief rule applies -- identity must not rest on hue alone.
+    """
+    ax.plot([x], [y], marker="o", markersize=6, color=color, zorder=5,
+            markeredgecolor=SURFACE, markeredgewidth=1.5, clip_on=False)
+    ax.annotate(f"  {text}", (x, y), color=INK, fontsize=9,
+                va="center", ha="left", annotation_clip=False)
+
+
+def plot_equity_curves(returns: pd.DataFrame, bench: pd.DataFrame, out: Path) -> None:
+    """Growth of 1 unit, net of costs, over the stitched out-of-sample period."""
+    wanted = [c for c in ("full", "single_alpha", "gbm", "no_agents_all_alphas")
+              if c in returns.columns]
+    bench_wanted = [c for c in ("universe_equal_weight", "sp500_cap_weight")
+                    if c in bench.columns]
+    if not wanted:
+        return
+
+    fig, ax = plt.subplots(figsize=(12, 6.5), facecolor=SURFACE)
+    _style_axes(ax)
+
+    # Benchmarks first, behind, in neutral grey.
+    for i, name in enumerate(bench_wanted):
+        equity = (1 + bench[name].fillna(0)).cumprod()
+        ax.plot(equity.index, equity.values, color=BENCH_GREY, linewidth=1.6,
+                linestyle="--" if i else "-", zorder=2)
+        _direct_label(ax, equity.index[-1], equity.iloc[-1],
+                      LABELS.get(name, name).replace("Benchmark: ", ""), BENCH_GREY)
+
+    for slot, name in enumerate(wanted):
+        equity = (1 + returns[name].fillna(0)).cumprod()
+        ax.plot(equity.index, equity.values, color=SERIES[slot], linewidth=2.0, zorder=3)
+        _direct_label(ax, equity.index[-1], equity.iloc[-1],
+                      LABELS.get(name, name).replace("Baseline: ", "").replace(" (CSA + RPA)", ""),
+                      SERIES[slot])
+
+    ax.axhline(1.0, color=GRID, linewidth=1.0, zorder=1)
+    ax.set_ylabel("growth of 1 unit (net of costs)", color=INK_MUTED, fontsize=10)
+    ax.set_title("Out-of-sample equity curves, net of transaction costs",
+                 color=INK, fontsize=13, loc="left", pad=14)
+    handles = [plt.Line2D([], [], color=SERIES[i], linewidth=2.0) for i in range(len(wanted))]
+    handles += [plt.Line2D([], [], color=BENCH_GREY, linewidth=1.6,
+                           linestyle="--" if i else "-") for i in range(len(bench_wanted))]
+    labels = [LABELS.get(n, n) for n in wanted] + [LABELS.get(n, n) for n in bench_wanted]
+    ax.legend(handles, labels, loc="upper left", frameon=False,
+              fontsize=9, labelcolor=INK_MUTED)
+    fig.subplots_adjust(right=0.78)
+    fig.savefig(out, dpi=120, facecolor=SURFACE, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_fold_returns(folds: pd.DataFrame, out: Path) -> None:
+    """Per-fold net return: dispersion is the point, so every fold is shown."""
+    sub = folds[folds["variant"] == "full"].dropna(subset=["cum_return_net"])
+    ew = folds[folds["variant"] == "single_alpha"].dropna(subset=["cum_return_net"])
+    if sub.empty:
+        return
+    sub = sub.sort_values("test_window")
+    ew = ew.set_index("test_window").reindex(sub["test_window"])
+
+    x = np.arange(len(sub))
+    width = 0.38
+    fig, ax = plt.subplots(figsize=(11, 5.5), facecolor=SURFACE)
+    _style_axes(ax)
+    # 2px surface gap between adjacent bars comes from the width/offset pair.
+    ax.bar(x - width / 2 - 0.01, sub["cum_return_net"] * 100, width,
+           color=SERIES[0], zorder=3, label=LABELS["full"])
+    ax.bar(x + width / 2 + 0.01, ew["cum_return_net"].to_numpy() * 100, width,
+           color=SERIES[1], zorder=3, label=LABELS["single_alpha"])
+    ax.axhline(0, color=INK_MUTED, linewidth=1.0, zorder=4)
+    ax.set_xticks(x)
+    ax.set_xticklabels(sub["test_window"], rotation=20, ha="right", fontsize=8)
+    ax.set_ylabel("cumulative return over the fold, net (%)", color=INK_MUTED, fontsize=10)
+    ax.set_title("Per-fold out-of-sample return: the dispersion a single test window hides",
+                 color=INK, fontsize=13, loc="left", pad=14)
+    ax.legend(loc="best", frameon=False, fontsize=9, labelcolor=INK_MUTED)
+    fig.savefig(out, dpi=120, facecolor=SURFACE, bbox_inches="tight")
+    plt.close(fig)
+
 
 
 def read(name: str) -> pd.DataFrame:
@@ -109,7 +219,17 @@ def main() -> None:
             add(f"| {r['fold']} | {r['train']} | {r['validation']} | {r['test']} |")
     add("")
 
+    daily = read("results_daily_returns_net.csv")
+    bench_daily = read("results_daily_benchmarks.csv")
+    if not daily.empty:
+        daily = daily.set_index(daily.columns[0]); daily.index = pd.to_datetime(daily.index)
+        bench_daily = bench_daily.set_index(bench_daily.columns[0])
+        bench_daily.index = pd.to_datetime(bench_daily.index)
+        plot_equity_curves(daily, bench_daily, REPORTS / "results_equity_curves.png")
+        plot_fold_returns(folds, REPORTS / "results_fold_returns.png")
+
     add("## Headline: stitched out-of-sample performance, net of costs\n")
+    add("![Out-of-sample equity curves](results_equity_curves.png)\n")
     add(overall_table(summary))
     add("")
     add(f"The full pipeline returned **{_pct(full_net)} cumulative** over "
@@ -128,6 +248,7 @@ def main() -> None:
         f"paper's headline number has to account for this before anything else.\n")
 
     add("## Per-fold results (full pipeline)\n")
+    add("![Per-fold returns](results_fold_returns.png)\n")
     add(fold_table(folds, "full"))
     add("")
     add(f"**{n_positive} of {n_folds} folds** were positive net of costs, with fold "
